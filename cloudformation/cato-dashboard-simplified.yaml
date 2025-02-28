@@ -1,0 +1,135 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for cATO Dashboard with Security Hub Integration (Simplified Version)'
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: Name of the S3 bucket where security findings will be stored
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket where the Lambda code zip is stored
+  LambdaCodeKey:
+    Type: String
+    Default: security_hub_integration.zip
+    Description: S3 key for the Lambda code zip file
+  CreateS3Bucket:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Whether to create the S3 bucket or use an existing one
+
+Conditions:
+  ShouldCreateS3Bucket: !Equals [!Ref CreateS3Bucket, 'true']
+
+Resources:
+  # S3 Bucket for data storage (conditional)
+  SecurityHubDataBucket:
+    Type: AWS::S3::Bucket
+    Condition: ShouldCreateS3Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Ref S3BucketName
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # IAM Role for Security Hub Lambda
+  SecurityHubLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SecurityHubS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - securityhub:GetFindings
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${S3BucketName}
+                  - !Sub arn:aws:s3:::${S3BucketName}/*
+
+  # Lambda Function
+  SecurityHubIntegrationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: cato-security-hub-integration
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt SecurityHubLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Runtime: python3.9
+      Timeout: 180
+      MemorySize: 512
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref S3BucketName
+
+  # EventBridge Rule for triggering Lambda
+  SecurityHubEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: cato-security-hub-findings-updated
+      Description: Trigger Lambda when Security Hub findings are updated
+      EventPattern:
+        source:
+          - aws.securityhub
+        detail-type:
+          - Security Hub Findings - Imported
+          - Security Hub Findings - Updated
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt SecurityHubIntegrationLambda.Arn
+          Id: CATOSecurityHubIntegrationTarget
+
+  # Lambda Permission for EventBridge
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SecurityHubIntegrationLambda
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SecurityHubEventRule.Arn
+
+  # Initial Lambda Invocation to generate data
+  InitialLambdaInvocation:
+    Type: Custom::LambdaInvoke
+    DependsOn:
+      - SecurityHubIntegrationLambda
+      - LambdaPermission
+    Properties:
+      ServiceToken: !GetAtt SecurityHubIntegrationLambda.Arn
+      # Adding a version parameter ensures the custom resource is updated
+      # if we need to redeploy without code changes
+      Version: '1.0'
+
+Outputs:
+  LambdaArn:
+    Description: ARN of the Security Hub integration Lambda
+    Value: !GetAtt SecurityHubIntegrationLambda.Arn
+  S3BucketForData:
+    Description: S3 bucket where security findings are stored
+    Value: !Ref S3BucketName
+  S3DataURL:
+    Description: URL to access the S3 bucket
+    Value: !Sub https://s3.console.aws.amazon.com/s3/buckets/${S3BucketName}/ 

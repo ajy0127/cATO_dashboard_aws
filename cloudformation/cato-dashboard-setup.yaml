@@ -1,0 +1,431 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for cATO Dashboard with Security Hub Integration'
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: Name of the S3 bucket where CSV files will be stored
+  QuickSightUserEmail:
+    Type: String
+    Description: Email address for the QuickSight admin user
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket where the Lambda code zip is stored
+  LambdaCodeKey:
+    Type: String
+    Default: security_hub_integration.zip
+    Description: S3 key for the Lambda code zip file
+  DashboardRefreshRate:
+    Type: String
+    Default: 24
+    Description: Refresh rate for the QuickSight dashboard in hours
+  WaitTimeForDashboardCreation:
+    Type: Number
+    Default: 120
+    Description: Time to wait (in seconds) for data to be available before creating dashboard
+
+Resources:
+  # S3 Bucket for data storage
+  SecurityHubDataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Ref S3BucketName
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # IAM Role for Security Hub Lambda
+  SecurityHubLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SecurityHubS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - securityhub:GetFindings
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${S3BucketName}
+                  - !Sub arn:aws:s3:::${S3BucketName}/*
+
+  # Lambda Function
+  SecurityHubIntegrationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: cato-security-hub-integration
+      Handler: security_hub_integration.lambda_handler
+      Role: !GetAtt SecurityHubLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Runtime: python3.9
+      Timeout: 180
+      MemorySize: 512
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref S3BucketName
+          CONTROL_FAMILIES_KEY: controls/control_families.csv
+          CONTROL_DETAILS_KEY: controls/control_details.csv
+
+  # EventBridge Rule for triggering Lambda
+  SecurityHubEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: cato-security-hub-findings-updated
+      Description: Trigger Lambda when Security Hub findings are updated
+      EventPattern:
+        source:
+          - aws.securityhub
+        detail-type:
+          - Security Hub Findings - Imported
+          - Security Hub Findings - Updated
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt SecurityHubIntegrationLambda.Arn
+          Id: CATOSecurityHubIntegrationTarget
+
+  # Lambda Permission for EventBridge
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SecurityHubIntegrationLambda
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SecurityHubEventRule.Arn
+
+  # Initial Lambda Invocation to generate data
+  InitialLambdaInvoke:
+    Type: Custom::LambdaInvoke
+    DependsOn: SecurityHubIntegrationLambda
+    Properties:
+      ServiceToken: !GetAtt SecurityHubIntegrationLambda.Arn
+
+  # Wait for data to be available
+  WaitForDataAvailable:
+    Type: AWS::CloudFormation::WaitCondition
+    DependsOn: InitialLambdaInvoke
+    Properties:
+      Handle: !Ref DataAvailableWaitHandle
+      Timeout: !Ref WaitTimeForDashboardCreation
+
+  # Wait handle for data availability
+  DataAvailableWaitHandle:
+    Type: AWS::CloudFormation::WaitConditionHandle
+
+  # QuickSight Role
+  QuickSightRole:
+    Type: AWS::IAM::Role
+    DependsOn: WaitForDataAvailable
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-quicksight-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: quicksight.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: QuickSightS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${S3BucketName}
+                  - !Sub arn:aws:s3:::${S3BucketName}/*
+              - Effect: Allow
+                Action:
+                  - quicksight:*
+                Resource: '*'
+
+  # QuickSight User
+  QuickSightUser:
+    Type: AWS::QuickSight::User
+    DependsOn: WaitForDataAvailable
+    Properties:
+      AwsAccountId: !Ref AWS::AccountId
+      Email: !Ref QuickSightUserEmail
+      IdentityType: IAM
+      UserRole: ADMIN
+      UserName: cato-admin
+      Namespace: default
+
+  # QuickSight Data Source
+  QuickSightS3DataSource:
+    Type: AWS::QuickSight::DataSource
+    DependsOn: QuickSightUser
+    Properties:
+      AwsAccountId: !Ref AWS::AccountId
+      DataSourceId: !Sub ${AWS::StackName}-s3-source
+      Name: CATO S3 Data Source
+      Type: S3
+      DataSourceParameters:
+        S3Parameters:
+          ManifestFileLocation:
+            Bucket: !Ref S3BucketName
+            Key: manifest.json
+      Permissions:
+        - Principal: !GetAtt QuickSightUser.Arn
+          Actions:
+            - quicksight:DescribeDataSource
+            - quicksight:DescribeDataSourcePermissions
+            - quicksight:PassDataSource
+            - quicksight:UpdateDataSource
+            - quicksight:DeleteDataSource
+            - quicksight:UpdateDataSourcePermissions
+
+  # Create S3 Manifest file
+  S3ManifestCreation:
+    Type: Custom::S3PutObject
+    DependsOn: SecurityHubDataBucket
+    Properties:
+      ServiceToken: !GetAtt S3ManifestCreationFunction.Arn
+      Bucket: !Ref S3BucketName
+      Key: manifest.json
+      Body: !Sub |
+        {
+          "fileLocations": [
+            {"URIPrefixes": ["s3://${S3BucketName}/controls/"]}
+          ],
+          "globalUploadSettings": {
+            "format": "CSV",
+            "delimiter": ",",
+            "containsHeader": "true",
+            "textqualifier": "\"",
+            "startFromRow": 1
+          }
+        }
+
+  # Lambda for Manifest Creation
+  S3ManifestCreationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt ManifestCreationRole.Arn
+      Runtime: python3.9
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import json
+          
+          def handler(event, context):
+              response_data = {}
+              
+              if event['RequestType'] == 'Delete':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                  return
+              
+              s3 = boto3.client('s3')
+              
+              try:
+                  # Get parameters
+                  bucket = event['ResourceProperties']['Bucket']
+                  key = event['ResourceProperties']['Key']
+                  body = event['ResourceProperties']['Body']
+                  
+                  # Put object
+                  s3.put_object(
+                      Bucket=bucket,
+                      Key=key,
+                      Body=body,
+                      ContentType='application/json'
+                  )
+                  
+                  response_data['Message'] = f"Created manifest at s3://{bucket}/{key}"
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+              except Exception as e:
+                  response_data['Error'] = str(e)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, response_data)
+
+  # Role for Manifest Creation Lambda
+  ManifestCreationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3PutObject
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub arn:aws:s3:::${S3BucketName}/*
+
+  # Control Families Dataset
+  ControlFamiliesDataset:
+    Type: AWS::QuickSight::DataSet
+    DependsOn: QuickSightS3DataSource
+    Properties:
+      AwsAccountId: !Ref AWS::AccountId
+      DataSetId: !Sub ${AWS::StackName}-control-families
+      Name: Control Families Dataset
+      PhysicalTableMap:
+        ControlFamiliesTable:
+          S3Source:
+            DataSourceArn: !GetAtt QuickSightS3DataSource.Arn
+            InputColumns:
+              - Name: family
+                Type: STRING
+              - Name: total
+                Type: INTEGER
+              - Name: passed
+                Type: INTEGER
+              - Name: failed
+                Type: INTEGER
+              - Name: not_applicable
+                Type: INTEGER
+              - Name: unknown
+                Type: INTEGER
+              - Name: compliance_percentage
+                Type: DECIMAL
+            UploadSettings:
+              Format: CSV
+              StartFromRow: 1
+              ContainsHeader: true
+      ImportMode: SPICE
+      RefreshConfiguration:
+        RefreshType: FULL_REFRESH 
+        ScheduleConfiguration: 
+          ScheduleFrequency: HOURLY
+          ScheduleId: !Sub ${AWS::StackName}-families-refresh
+          StartAfterDateTime: "2023-01-01T00:00:00Z"
+          HourOfDay: !Ref DashboardRefreshRate
+      Permissions:
+        - Principal: !GetAtt QuickSightUser.Arn
+          Actions:
+            - quicksight:DescribeDataSet
+            - quicksight:DescribeDataSetPermissions
+            - quicksight:PassDataSet
+            - quicksight:UpdateDataSet
+            - quicksight:DeleteDataSet
+            - quicksight:UpdateDataSetPermissions
+
+  # Control Details Dataset
+  ControlDetailsDataset:
+    Type: AWS::QuickSight::DataSet
+    DependsOn: QuickSightS3DataSource
+    Properties:
+      AwsAccountId: !Ref AWS::AccountId
+      DataSetId: !Sub ${AWS::StackName}-control-details
+      Name: Control Details Dataset
+      PhysicalTableMap:
+        ControlDetailsTable:
+          S3Source:
+            DataSourceArn: !GetAtt QuickSightS3DataSource.Arn
+            InputColumns:
+              - Name: control_id
+                Type: STRING
+              - Name: family
+                Type: STRING
+              - Name: status
+                Type: STRING
+              - Name: severity
+                Type: STRING
+              - Name: description
+                Type: STRING
+            UploadSettings:
+              Format: CSV
+              StartFromRow: 1
+              ContainsHeader: true
+      ImportMode: SPICE
+      RefreshConfiguration:
+        RefreshType: FULL_REFRESH 
+        ScheduleConfiguration: 
+          ScheduleFrequency: HOURLY
+          ScheduleId: !Sub ${AWS::StackName}-details-refresh
+          StartAfterDateTime: "2023-01-01T00:00:00Z"
+          HourOfDay: !Ref DashboardRefreshRate
+      Permissions:
+        - Principal: !GetAtt QuickSightUser.Arn
+          Actions:
+            - quicksight:DescribeDataSet
+            - quicksight:DescribeDataSetPermissions
+            - quicksight:PassDataSet
+            - quicksight:UpdateDataSet
+            - quicksight:DeleteDataSet
+            - quicksight:UpdateDataSetPermissions
+
+  # QuickSight Dashboard
+  CATODashboard:
+    Type: AWS::QuickSight::Dashboard
+    DependsOn:
+      - ControlFamiliesDataset
+      - ControlDetailsDataset
+    Properties:
+      AwsAccountId: !Ref AWS::AccountId
+      DashboardId: !Sub ${AWS::StackName}-dashboard
+      Name: cATO Dashboard
+      Permissions:
+        - Principal: !GetAtt QuickSightUser.Arn
+          Actions:
+            - quicksight:DescribeDashboard
+            - quicksight:ListDashboardVersions
+            - quicksight:UpdateDashboardPermissions
+            - quicksight:QueryDashboard
+            - quicksight:UpdateDashboard
+            - quicksight:DeleteDashboard
+            - quicksight:DescribeDashboardPermissions
+            - quicksight:UpdateDashboardPublishedVersion
+      SourceEntity:
+        SourceTemplate:
+          DataSetReferences:
+            - DataSetPlaceholder: control_families_dataset
+              DataSetArn: !GetAtt ControlFamiliesDataset.Arn
+            - DataSetPlaceholder: control_details_dataset
+              DataSetArn: !GetAtt ControlDetailsDataset.Arn
+
+Outputs:
+  QuickSightUserArn:
+    Description: ARN of the created QuickSight user
+    Value: !GetAtt QuickSightUser.Arn
+  DashboardId:
+    Description: ID of the created QuickSight dashboard
+    Value: !GetAtt CATODashboard.DashboardId
+  DataSourceId:
+    Description: ID of the created QuickSight data source
+    Value: !GetAtt QuickSightS3DataSource.DataSourceId
+  LambdaArn:
+    Description: ARN of the Security Hub integration Lambda
+    Value: !GetAtt SecurityHubIntegrationLambda.Arn
+  S3BucketForData:
+    Description: S3 bucket where control data is stored
+    Value: !Ref S3BucketName
+  DashboardURL:
+    Description: URL to access the cATO Dashboard
+    Value: !Sub https://${AWS::Region}.quicksight.aws.amazon.com/sn/dashboards/${CATODashboard.DashboardId} 
