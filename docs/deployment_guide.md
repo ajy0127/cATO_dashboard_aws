@@ -1,217 +1,280 @@
-# cATO Dashboard Deployment Guide
+# Deployment Guide for cATO Dashboard
 
-This guide provides step-by-step instructions for deploying the cATO Dashboard solution with AWS CloudFormation. It includes both the simplified deployment (Security Hub integration only) and the full deployment with QuickSight integration.
+This guide provides step-by-step instructions for deploying the cATO Dashboard with Security Hub integration. The Grafana dashboard setup is handled as a separate manual process after deployment (see the Grafana Integration Guide for details).
 
 ## Prerequisites
 
-Before starting deployment, ensure you have:
+Before you begin, make sure you have the following:
 
-1. An AWS account with administrator access
-2. AWS CLI installed and configured with appropriate credentials
-3. Security Hub enabled in your AWS account with NIST 800-53 standard
-4. (For full deployment) QuickSight Enterprise Edition subscription
-5. Python 3.9 or higher installed on your local machine
+1. **AWS Account** with permissions to create IAM roles, Lambda functions, S3 buckets, Athena resources, and EventBridge rules
+2. **AWS Security Hub** enabled with NIST 800-53 standard activated
+3. **AWS CLI** installed and configured with appropriate access credentials
+4. **Amazon Managed Grafana** workspace (only if you plan to set up the Grafana dashboard after deployment)
+5. **Python 3.8+** installed (for local testing and development)
 
-## Simplified Deployment (Security Hub Integration Only)
+### Setting Up AWS CLI Profiles (Optional)
 
-### Step 1: Clone the Repository
+AWS CLI profiles allow you to manage multiple sets of AWS credentials, which is useful if you need to deploy to different AWS accounts or regions.
+
+To create a new AWS CLI profile:
+
+```bash
+aws configure --profile your-profile-name
+```
+
+You'll be prompted to enter:
+- AWS Access Key ID
+- AWS Secret Access Key
+- Default region name (e.g., us-east-1)
+- Default output format (json recommended)
+
+To list your existing profiles:
+
+```bash
+aws configure list-profiles
+```
+
+## Deployment Process
+
+The deployment script will guide you through setting up the Security Hub integration component of the cATO Dashboard.
+
+### Clone the Repository
 
 ```bash
 git clone https://github.com/yourusername/cato-dashboard.git
 cd cato-dashboard
 ```
 
-### Step 2: Create S3 Buckets
+### Run the Deployment Script
+
+Make the deployment script executable:
 
 ```bash
-# Create unique bucket names
-export LAMBDA_BUCKET="cato-lambda-code-$(date +%Y%m%d%H%M%S)-$(openssl rand -hex 4)"
-export DATA_BUCKET="cato-dashboard-data-$(date +%Y%m%d%H%M%S)-$(openssl rand -hex 4)"
-
-# Create the buckets
-aws s3 mb s3://$LAMBDA_BUCKET --region <your-region>
-aws s3 mb s3://$DATA_BUCKET --region <your-region>
+chmod +x scripts/deploy_dashboard.sh
+./scripts/deploy_dashboard.sh
 ```
 
-### Step 3: Build and Upload Lambda Package
+The script will:
+1. Create an S3 bucket for Lambda code
+2. Create an S3 bucket for Security Hub findings data
+3. Package and upload the Lambda function
+4. Deploy the CloudFormation stack
+5. Set up initial data collection
+
+### Manual Deployment (Alternative)
+
+If you prefer to deploy manually or need more control over the process, follow these steps:
+
+#### 1. Create S3 Buckets
+
+Create two S3 buckets:
+- One for Lambda code
+- One for Security Hub findings data
 
 ```bash
-# Install dependencies and create zip package
+aws s3 mb s3://your-lambda-code-bucket --region your-region
+aws s3 mb s3://your-findings-data-bucket --region your-region
+```
+
+#### 2. Package and Upload Lambda Code
+
+```bash
 cd src
-python3 -m pip install -r requirements.txt -t .
-zip -r security_hub_integration.zip lambda_function.py requests/ certifi/ charset_normalizer/ idna/ urllib3/
-aws s3 cp security_hub_integration.zip s3://$LAMBDA_BUCKET/ --region <your-region>
+zip -r ../lambda_function.zip lambda_function.py
 cd ..
+aws s3 cp lambda_function.zip s3://your-lambda-code-bucket/
 ```
 
-### Step 4: Deploy with CloudFormation
+#### 3. Deploy CloudFormation Stack
 
 ```bash
-aws cloudformation create-stack \
+aws cloudformation deploy \
+  --template-file cloudformation/cato-dashboard.yaml \
   --stack-name cato-dashboard \
-  --template-body file://cloudformation/cato-dashboard-simplified.yaml \
-  --parameters \
-    ParameterKey=S3BucketName,ParameterValue=$DATA_BUCKET \
-    ParameterKey=LambdaCodeBucket,ParameterValue=$LAMBDA_BUCKET \
-    ParameterKey=LambdaCodeKey,ParameterValue=security_hub_integration.zip \
-    ParameterKey=CreateS3Bucket,ParameterValue=false \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region <your-region>
+  --capabilities CAPABILITY_IAM \
+  --parameter-overrides \
+    S3BucketName=your-findings-data-bucket \
+    LambdaCodeBucket=your-lambda-code-bucket \
+    LambdaCodeKey=lambda_function.zip \
+    CreateS3Bucket=false \
+    CreateAthenaResultsBucket=true \
+    LambdaFunctionName=cato-security-hub-integration \
+    AthenaDatabaseName=cato_security_findings \
+    GrafanaIntegration=false
 ```
 
-### Step 5: Monitor the Deployment
+## Testing the Deployment
 
+To verify that the deployment was successful:
+
+1. Check that the Lambda function is running correctly:
 ```bash
-# Check stack status
-aws cloudformation describe-stacks \
-  --stack-name cato-dashboard \
-  --query 'Stacks[0].StackStatus' \
-  --region <your-region>
-```
-
-The deployment should complete in 3-5 minutes. You can also monitor the progress in the AWS CloudFormation console.
-
-### Step 6: Verify the Deployment
-
-Once the stack creation is complete, verify that:
-
-1. The Lambda function has been created and works properly
-2. Security Hub findings are being stored in the S3 bucket
-3. The EventBridge rule is configured to trigger the Lambda
-
-```bash
-# Check if files exist in S3
-aws s3 ls s3://$DATA_BUCKET/ --region <your-region>
-
-# Test the Lambda function manually
-aws lambda invoke \
-  --function-name cato-security-hub-integration \
-  --payload '{}' \
-  --region <your-region> \
-  response.json
-
-# Check the Lambda output
+aws lambda invoke --function-name cato-security-hub-integration --payload '{}' response.json
 cat response.json
 ```
 
-## Full Deployment with QuickSight Integration
-
-### Step Modifications for Full Deployment
-
-Follow the same steps 1-3 as in the simplified deployment, then:
-
-### Step 4 (Modified): Deploy with Full CloudFormation Template
-
+2. Check that data is being collected in the S3 bucket:
 ```bash
-# Create a QuickSight admin user if you don't have one
-export QUICKSIGHT_USER_EMAIL="your-email@example.com"
-
-aws cloudformation create-stack \
-  --stack-name cato-dashboard-full \
-  --template-body file://cloudformation/cato-dashboard-setup.yaml \
-  --parameters \
-    ParameterKey=S3BucketName,ParameterValue=$DATA_BUCKET \
-    ParameterKey=LambdaCodeBucket,ParameterValue=$LAMBDA_BUCKET \
-    ParameterKey=LambdaCodeKey,ParameterValue=security_hub_integration.zip \
-    ParameterKey=QuickSightUserEmail,ParameterValue=$QUICKSIGHT_USER_EMAIL \
-    ParameterKey=DashboardRefreshRate,ParameterValue=24 \
-    ParameterKey=WaitTimeForDashboardCreation,ParameterValue=180 \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region <your-region> \
-  --timeout-in-minutes 30
+aws s3 ls s3://your-findings-data-bucket/ --recursive
 ```
 
-### Step 5 (Modified): Monitor the Full Deployment
+3. Run the automated tests:
+```bash
+./scripts/run_tests.sh
+```
+
+### Check Deployment Status
+
+Monitor the CloudFormation stack creation:
 
 ```bash
-# Check stack status
 aws cloudformation describe-stacks \
-  --stack-name cato-dashboard-full \
-  --query 'Stacks[0].StackStatus' \
-  --region <your-region>
+  --stack-name cato-dashboard-YYYYMMDD \
+  --profile <your-profile-name> \
+  --query 'Stacks[0].StackStatus'
 ```
 
-The full deployment can take 15-20 minutes due to the QuickSight setup.
+The deployment is complete when the status is `CREATE_COMPLETE`.
 
-### Step 6 (Modified): Access the QuickSight Dashboard
+### Verify Deployment
 
-1. Sign in to QuickSight with the admin email provided
-2. Navigate to the Dashboards section
-3. Open the "cATO Dashboard" 
-4. The dashboard should display your Security Hub findings and compliance status
+Verify that the deployment was successful by checking the following:
+
+1. Check if the S3 bucket was created and contains data:
+
+```bash
+aws s3 ls s3://cato-dashboard-data-<timestamp>-<random>/ --profile <your-profile-name>
+```
+
+2. Test the Lambda function by invoking it (use the unique Lambda function name shown during deployment):
+
+```bash
+aws lambda invoke \
+  --function-name cato-security-hub-integration-<timestamp>-<random> \
+  --profile <your-profile-name> \
+  --payload '{}' \
+  response.json
+```
+
+3. Check CloudWatch Logs for the Lambda function:
+
+```bash
+aws logs get-log-events \
+  --log-group-name /aws/lambda/cato-security-hub-integration-<timestamp>-<random> \
+  --profile <your-profile-name> \
+  --log-stream-name $(aws logs describe-log-streams \
+    --log-group-name /aws/lambda/cato-security-hub-integration-<timestamp>-<random> \
+    --profile <your-profile-name> \
+    --query 'logStreams[0].logStreamName' \
+    --output text)
+```
+
+## Setting Up Grafana After Deployment
+
+For detailed instructions on manually setting up the Grafana dashboard using data from your deployed solution, refer to the [Grafana Integration Guide](grafana-guide.md).
+
+The guide covers:
+- Creating a Grafana workspace
+- Setting up Athena as a data source
+- Creating visualizations for compliance metrics
+- Adding annotations for finding updates
+- Sharing your dashboard with team members
+
+## Using the Full Deployment Script
+
+If you prefer a more automated approach, you can use the provided deployment script:
+
+```bash
+./deploy.sh
+```
+
+This script will:
+1. Create unique S3 bucket names
+2. Build and upload the Lambda package
+3. Deploy the CloudFormation stack
+4. Monitor the deployment until it completes
+5. Display instructions for next steps
+
+After deployment:
+1. Check the S3 bucket for collected findings
+2. Follow the [Grafana Integration Guide](grafana-guide.md) to set up your visualization dashboard
+3. Customize your Grafana dashboard as needed for your organization
 
 ## Troubleshooting
 
-### Common Issues and Solutions
+### Common Issues
 
-1. **CloudFormation Stack Creation Stalling**:
-   - Check the Lambda function logs in CloudWatch for errors
-   - Verify Security Hub is properly configured
-   - Try the simplified deployment first before attempting the full deployment
+1. **CloudFormation Stack Creation Fails**
+   - Check the CloudFormation Events tab in the AWS Console
+   - Common causes: S3 bucket name conflicts, insufficient permissions, hitting service limits
+   - Solution: Review error messages and make necessary adjustments
 
-2. **Missing Dependencies in Lambda Package**:
-   - Ensure you've installed all dependencies correctly with `pip install -r requirements.txt -t .`
-   - Verify that all necessary directories are included in the zip file
+2. **Resource Already Exists Error**
+   - Error: "Resource already exists in another stack" during deployment
+   - Cause: You've previously deployed the stack with the same resource names
+   - Solution: The current script generates unique resource names to avoid this issue. If you're using an older version of the script, update to the latest version or delete the conflicting stack before deployment.
 
-3. **S3 Bucket Already Exists**:
-   - S3 bucket names must be globally unique
-   - If you get an error that the bucket already exists, generate a new bucket name
+3. **Missing Dependencies**
+   - Error: Lambda functions fail with import errors
+   - Solution: Make sure the Lambda package includes all required dependencies
 
-4. **QuickSight Access Issues**:
-   - Ensure your QuickSight subscription is active
-   - Verify the email used is registered with QuickSight
-   - Check IAM permissions for QuickSight access
+4. **S3 Bucket Name Conflicts**
+   - Error: "Bucket already exists" during deployment
+   - Solution: Try a different unique identifier when running the deployment script
 
-### Viewing CloudWatch Logs
+5. **Security Hub Integration Issues**
+   - Error: No findings are being processed
+   - Solution: 
+     - Ensure Security Hub is enabled with the NIST 800-53 standard
+     - Check EventBridge rule is properly configured
+     - Verify Lambda function has necessary permissions
 
-To check the Lambda function logs for errors:
+6. **AWS Profile Authentication Errors**
+   - Error: "Unable to locate credentials" or "Access Denied"
+   - Solution:
+     - Verify profile exists: `aws configure list-profiles`
+     - Validate credentials: `aws sts get-caller-identity --profile <your-profile-name>`
+     - Ensure the user has sufficient permissions
+
+### Viewing Lambda Logs
+
+To view CloudWatch logs for troubleshooting Lambda issues:
 
 ```bash
-# Get the log group name
-LOG_GROUP_NAME="/aws/lambda/cato-security-hub-integration"
-
-# Get the most recent log stream
-LOG_STREAM=$(aws logs describe-log-streams \
-  --log-group-name $LOG_GROUP_NAME \
-  --order-by LastEventTime \
-  --descending \
-  --limit 1 \
-  --query 'logStreams[0].logStreamName' \
-  --output text \
-  --region <your-region>)
-
-# View the logs
 aws logs get-log-events \
-  --log-group-name $LOG_GROUP_NAME \
-  --log-stream-name $LOG_STREAM \
-  --region <your-region>
+  --log-group-name /aws/lambda/cato-security-hub-integration-<timestamp>-<random> \
+  --profile <your-profile-name> \
+  --log-stream-name $(aws logs describe-log-streams \
+    --log-group-name /aws/lambda/cato-security-hub-integration-<timestamp>-<random> \
+    --profile <your-profile-name> \
+    --order-by LastEventTime \
+    --descending \
+    --limit 1 \
+    --query 'logStreams[0].logStreamName' \
+    --output text)
 ```
 
-## Cleaning Up Resources
+### Cleaning Up Resources
 
-If you need to remove the deployed resources:
+If you need to delete the deployment:
 
 ```bash
-# Delete the CloudFormation stack
 aws cloudformation delete-stack \
-  --stack-name cato-dashboard \
-  --region <your-region>
-
-# Delete the S3 buckets
-aws s3 rm s3://$DATA_BUCKET --recursive --region <your-region>
-aws s3 rb s3://$DATA_BUCKET --region <your-region>
-
-aws s3 rm s3://$LAMBDA_BUCKET --recursive --region <your-region>
-aws s3 rb s3://$LAMBDA_BUCKET --region <your-region>
+  --stack-name cato-dashboard-YYYYMMDD \
+  --profile <your-profile-name>
 ```
 
 ## Next Steps
 
 After successful deployment:
 
-1. Verify that Security Hub findings are being updated correctly
-2. Customize the QuickSight dashboard for your specific requirements
-3. Set up alerts for critical findings
-4. Schedule regular reviews of the compliance status
+1. Verify that Security Hub findings are being processed correctly
+2. Follow the [Grafana Integration Guide](grafana-guide.md) to set up your visualization dashboard
+3. Customize your Grafana dashboard as needed for your organization
 
-For more information on using the QuickSight dashboard, refer to the [QuickSight Guide](quicksight-guide.md). 
+## Getting Help
+
+If you encounter issues not covered in this guide, please:
+1. Check the project's GitHub Issues section
+2. Review AWS service quotas and limits
+3. Contact project maintainers for support 

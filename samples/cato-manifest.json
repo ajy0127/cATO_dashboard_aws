@@ -1,0 +1,15 @@
+{
+    "fileLocations": [
+      {
+        "URIPrefixes": [
+          "s3://cato-dashboard-data-20250228174401-a455a876/"
+        ]
+      }
+    ],
+    "globalUploadSettings": {
+      "format": "JSON",
+      "delimiter": ",",
+      "textqualifier": "'",
+      "containsHeader": "true"
+    }
+  }

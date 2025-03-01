@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CloudFormation template for cATO Dashboard with Security Hub Integration (Simplified Version)'
+Description: 'CloudFormation template for cATO Dashboard with Security Hub Integration and Athena Analysis'
 
 Parameters:
   S3BucketName:
@@ -17,9 +17,42 @@ Parameters:
     Default: 'true'
     AllowedValues: ['true', 'false']
     Description: Whether to create the S3 bucket or use an existing one
+  CreateAthenaResultsBucket:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Whether to create the Athena results bucket or use an existing one
+  LambdaFunctionName:
+    Type: String
+    Description: Name for the Lambda function (should be unique)
+    Default: cato-security-hub-integration
+  AthenaDatabaseName:
+    Type: String
+    Description: Name for the Athena database
+    Default: cato_security_findings
+  GrafanaIntegration:
+    Type: String
+    Description: Enable Grafana integration
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+  GrafanaURL:
+    Type: String
+    Description: URL for your Grafana instance (if GrafanaIntegration is true)
+    Default: ''
+  GrafanaAPIKey:
+    Type: String
+    Description: API key for Grafana (if GrafanaIntegration is true)
+    Default: ''
+    NoEcho: true
+  GrafanaDashboardID:
+    Type: String
+    Description: Dashboard ID for Grafana annotations (if GrafanaIntegration is true)
+    Default: '1'
 
 Conditions:
   ShouldCreateS3Bucket: !Equals [!Ref CreateS3Bucket, 'true']
+  ShouldCreateAthenaResultsBucket: !Equals [!Ref CreateAthenaResultsBucket, 'true']
+  EnableGrafanaIntegration: !Equals [!Ref GrafanaIntegration, 'true']
 
 Resources:
   # S3 Bucket for data storage (conditional)
@@ -27,6 +60,7 @@ Resources:
     Type: AWS::S3::Bucket
     Condition: ShouldCreateS3Bucket
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BucketName: !Ref S3BucketName
       VersioningConfiguration:
@@ -37,6 +71,22 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
+  # S3 Bucket for Athena query results (conditional)
+  AthenaQueryResultsBucket:
+    Type: AWS::S3::Bucket
+    Condition: ShouldCreateAthenaResultsBucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub ${S3BucketName}-athena-results
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+        
   # IAM Role for Security Hub Lambda
   SecurityHubLambdaRole:
     Type: AWS::IAM::Role
@@ -64,15 +114,33 @@ Resources:
                   - s3:PutObject
                   - s3:GetObject
                   - s3:ListBucket
+                  - s3:CreateBucket
+                  - s3:HeadBucket
                 Resource:
                   - !Sub arn:aws:s3:::${S3BucketName}
                   - !Sub arn:aws:s3:::${S3BucketName}/*
+                  - !Sub arn:aws:s3:::${S3BucketName}-athena-results
+                  - !Sub arn:aws:s3:::${S3BucketName}-athena-results/*
+              - Effect: Allow
+                Action:
+                  - athena:StartQueryExecution
+                  - athena:GetQueryExecution
+                  - athena:GetQueryResults
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - glue:CreateDatabase
+                  - glue:CreateTable
+                  - glue:GetDatabase
+                  - glue:GetTable
+                  - glue:UpdateTable
+                Resource: '*'
 
   # Lambda Function
   SecurityHubIntegrationLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: cato-security-hub-integration
+      FunctionName: !Ref LambdaFunctionName
       Handler: lambda_function.lambda_handler
       Role: !GetAtt SecurityHubLambdaRole.Arn
       Code:
@@ -83,13 +151,19 @@ Resources:
       MemorySize: 512
       Environment:
         Variables:
-          BUCKET_NAME: !Ref S3BucketName
+          S3_BUCKET_NAME: !Ref S3BucketName
+          ATHENA_DATABASE: !Ref AthenaDatabaseName
+          ATHENA_RESULTS_BUCKET: !Sub ${S3BucketName}-athena-results
+          GRAFANA_API_KEY: !If [EnableGrafanaIntegration, !Ref GrafanaAPIKey, '']
+          GRAFANA_URL: !If [EnableGrafanaIntegration, !Ref GrafanaURL, '']
+          GRAFANA_DASHBOARD_ID: !If [EnableGrafanaIntegration, !Ref GrafanaDashboardID, '']
 
   # EventBridge Rule for triggering Lambda
   SecurityHubEventRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: cato-security-hub-findings-updated
+      # Use a shorter name to avoid exceeding the 64 character limit
+      Name: !Sub cato-sh-rule-${AWS::StackName}
       Description: Trigger Lambda when Security Hub findings are updated
       EventPattern:
         source:
@@ -111,25 +185,117 @@ Resources:
       Principal: events.amazonaws.com
       SourceArn: !GetAtt SecurityHubEventRule.Arn
 
+  # Athena Database
+  AthenaDatabase:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Database: default
+      Description: Create Athena database for cATO security findings
+      Name: CreateCatoDatabase
+      QueryString: !Sub CREATE DATABASE IF NOT EXISTS ${AthenaDatabaseName}
+
+  # Athena Table
+  AthenaTableCreation:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Database: !Ref AthenaDatabaseName
+      Description: Create Athena table for security findings
+      Name: CreateSecurityFindingsTable
+      QueryString: !Sub |
+        CREATE EXTERNAL TABLE IF NOT EXISTS security_findings (
+          id STRING,
+          title STRING,
+          description STRING,
+          severity STRING,
+          resource_type STRING,
+          resource_id STRING,
+          found_at STRING,
+          status STRING,
+          compliance_status STRING,
+          product_name STRING,
+          company_name STRING,
+          region STRING
+        )
+        ROW FORMAT SERDE 'org.openx.data.jsonserde.JsonSerDe'
+        LOCATION 's3://${S3BucketName}/'
+        TBLPROPERTIES ('has_encrypted_data'='false')
+
   # Initial Lambda Invocation to generate data
+  # Using a CloudWatch custom resource with proper wait time
+  InitialLambdaInvocationDelay:
+    Type: AWS::CloudFormation::WaitConditionHandle
+
+  InitialLambdaWaitCondition:
+    Type: AWS::CloudFormation::WaitCondition
+    Properties:
+      Handle: !Ref InitialLambdaInvocationDelay
+      Timeout: 30
+      Count: 0
+
+  # Direct Lambda invocation instead of Custom::LambdaInvoke
+  # This resource will wait for the Lambda function to be ready
   InitialLambdaInvocation:
-    Type: Custom::LambdaInvoke
-    DependsOn:
-      - SecurityHubIntegrationLambda
-      - LambdaPermission
+    Type: AWS::CloudFormation::CustomResource
     Properties:
       ServiceToken: !GetAtt SecurityHubIntegrationLambda.Arn
       # Adding a version parameter ensures the custom resource is updated
       # if we need to redeploy without code changes
-      Version: '1.0'
+      Version: '1.1'
+      # Include the stack name for debugging
+      StackName: !Ref AWS::StackName
+      # Only used for identification
+      Purpose: "Initial data collection"
+
+  # Daily scheduled run for findings collection
+  DailySecurityHubExportRule:
+    Type: AWS::Events::Rule
+    Properties:
+      # Use a shorter name to avoid exceeding the 64 character limit
+      Name: !Sub cato-daily-export-${AWS::StackName}
+      Description: Trigger Lambda daily to collect Security Hub findings
+      ScheduleExpression: rate(1 day)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt SecurityHubIntegrationLambda.Arn
+          Id: CATOSecurityHubDailyExport
+
+  # Permission for scheduled event
+  ScheduledLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SecurityHubIntegrationLambda
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailySecurityHubExportRule.Arn
 
 Outputs:
   LambdaArn:
     Description: ARN of the Security Hub integration Lambda
     Value: !GetAtt SecurityHubIntegrationLambda.Arn
+  LambdaName:
+    Description: Name of the Lambda function
+    Value: !Ref LambdaFunctionName
   S3BucketForData:
     Description: S3 bucket where security findings are stored
     Value: !Ref S3BucketName
   S3DataURL:
     Description: URL to access the S3 bucket
-    Value: !Sub https://s3.console.aws.amazon.com/s3/buckets/${S3BucketName}/ 
+    Value: !Sub https://s3.console.aws.amazon.com/s3/buckets/${S3BucketName}/
+  AthenaDatabase:
+    Description: Athena database for security findings analysis
+    Value: !Ref AthenaDatabaseName
+  AthenaConsoleURL:
+    Description: URL to access Athena in the AWS Console
+    Value: !Sub https://console.aws.amazon.com/athena/home?region=${AWS::Region}#query
+  GrafanaConnectionInstructions:
+    Description: Instructions for connecting Grafana
+    Value: !Sub "Connect Grafana to Athena database ${AthenaDatabaseName} and query the security_findings table. See docs/grafana-guide.md for detailed instructions."
+  FindingsDataLocation:
+    Description: S3 location of findings data
+    Value: !Sub "s3://${S3BucketName}/findings/"
+  AthenaQueryResultLocation:
+    Description: S3 location for Athena query results
+    Value: !If [ShouldCreateAthenaResultsBucket, !Sub "s3://${S3BucketName}-athena-results/", !Sub "s3://${S3BucketName}-athena-results/"]
+  DeploymentComplete:
+    Description: Status of deployment
+    Value: "Deployment completed successfully. Lambda function is ready to collect Security Hub findings." 

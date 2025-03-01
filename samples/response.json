@@ -1,0 +1,1 @@
+{"statusCode": 200, "body": "\"Successfully uploaded 100 findings to S3 bucket cato-dashboard-data-20250301125748-49dfa885 and updated Athena table\""}
