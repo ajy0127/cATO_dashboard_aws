@@ -1,3 +1,5 @@
+[![CI/CD Pipeline for cATO Dashboard](https://github.com/ajy0127/cATO_dashboard_aws/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/ajy0127/cATO_dashboard_aws/actions/workflows/ci-cd.yml)
+
 # cATO Dashboard Project
 
 This project provides infrastructure-as-code and documentation for setting up a continuous Authority to Operate (cATO) dashboard using Amazon Managed Grafana with automated data integration from AWS Security Hub via Amazon Athena. The dashboard helps Information System Security Officers (ISSOs) and Authorizing Officials (AOs) monitor NIST 800-53 compliance in real-time.
