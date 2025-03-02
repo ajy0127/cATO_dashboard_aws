@@ -59,6 +59,50 @@ The deployment process includes:
 2. Configuring Amazon Managed Grafana
 3. Building compliance visualization dashboards
 
+## Cost Considerations
+
+Running the cATO Dashboard continuously involves costs for several AWS services. Here's an estimated monthly breakdown for a typical deployment:
+
+### AWS Service Costs (Estimated Monthly)
+
+| Service | Usage Pattern | Estimated Cost (USD) | Cost Factors |
+|---------|---------------|----------------------|--------------|
+| **AWS Lambda** | Daily invocations + Security Hub events | $5-15 | Function duration, memory allocation, number of findings |
+| **Amazon S3** | Storage for findings data | $1-5 | Data volume, access frequency |
+| **Amazon Athena** | Queries for dashboard visualization | $5-20 | Query frequency, data scanned per query |
+| **Amazon Managed Grafana** | Dashboard hosting | $9-49 | Workspace tier, number of users |
+| **AWS Security Hub** | Security findings source | $10-100+ | Number of accounts, resources monitored |
+| **Amazon EventBridge** | Event routing | < $1 | Number of events processed |
+| **CloudWatch Logs** | Lambda function logs | $1-5 | Log volume, retention period |
+| **Total Estimated Monthly Cost** | | **$31-195+** | |
+
+### Cost Optimization Tips
+
+1. **Lambda Optimization**:
+   - Adjust memory allocation based on actual usage patterns
+   - Implement efficient code to reduce execution time
+
+2. **Athena Query Optimization**:
+   - Use partitioning for your security findings data
+   - Write efficient queries with appropriate WHERE clauses
+   - Consider using Athena workgroups with query result reuse
+
+3. **S3 Storage Management**:
+   - Implement lifecycle policies to archive older findings data
+   - Consider compressing data for long-term storage
+
+4. **Grafana Usage**:
+   - Start with the Starter tier ($9/month) and upgrade only when needed
+   - Limit the number of admin users
+
+5. **Security Hub**:
+   - Be selective about which security standards you enable
+   - Consider aggregating findings from multiple accounts to a single monitoring account
+
+### Cost Monitoring
+
+Set up AWS Cost Explorer and create budget alerts to monitor your spending. You can also use the AWS Pricing Calculator to estimate costs based on your specific usage patterns: [AWS Pricing Calculator](https://calculator.aws/)
+
 ## Why Grafana?
 
 Amazon Managed Grafana provides several advantages for security compliance visualization:
