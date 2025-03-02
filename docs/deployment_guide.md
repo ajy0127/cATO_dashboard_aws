@@ -171,4 +171,293 @@ After successful deployment:
 2. Set up regular reviews of your compliance data
 3. Consider setting up alerts for critical compliance issues
 
-For detailed instructions on building effective compliance visualizations, refer to the [Grafana Guide](grafana-guide.md). 
+For detailed instructions on building effective compliance visualizations, refer to the [Grafana Guide](grafana-guide.md).
+
+## CloudFormation Template for Grafana with Basic Authentication
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'cATO Dashboard with Self-Hosted Grafana'
+
+Parameters:
+  AdminUsername:
+    Type: String
+    Default: 'admin'
+    Description: Username for Grafana admin user
+  
+  AdminPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Password for Grafana admin user
+    ConstraintDescription: Must be at least 8 characters
+  
+  ViewerUsername:
+    Type: String
+    Default: 'viewer'
+    Description: Username for Grafana viewer user
+  
+  ViewerPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Password for Grafana viewer user
+    ConstraintDescription: Must be at least 8 characters
+  
+  InstanceType:
+    Type: String
+    Default: 't3.small'
+    AllowedValues: ['t3.micro', 't3.small', 't3.medium']
+    Description: EC2 Instance type for Grafana server
+
+Resources:
+  # Security Group for Grafana instance
+  GrafanaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Grafana server
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+  
+  # IAM Role for Grafana to access AWS resources
+  GrafanaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonAthenaFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+  
+  # Instance Profile
+  GrafanaInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref GrafanaRole
+  
+  # EC2 Instance for Grafana
+  GrafanaInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: ami-0261755bbcb8c4a84  # Amazon Linux 2023 (us-east-1)
+      SecurityGroupIds:
+        - !GetAtt GrafanaSecurityGroup.GroupId
+      IamInstanceProfile: !Ref GrafanaInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          
+          # Update system packages
+          dnf update -y
+          
+          # Install Docker
+          dnf install -y docker
+          systemctl enable docker.service
+          systemctl start docker.service
+          
+          # Create directories for Grafana persistence
+          mkdir -p /grafana/data /grafana/dashboards /grafana/provisioning
+          
+          # Create provisioning directories
+          mkdir -p /grafana/provisioning/datasources
+          mkdir -p /grafana/provisioning/dashboards
+          
+          # Create data source configuration for Athena
+          cat > /grafana/provisioning/datasources/athena.yaml << 'EOL'
+          apiVersion: 1
+          datasources:
+            - name: AWS Athena
+              type: grafana-athena-datasource
+              access: proxy
+              isDefault: true
+              jsonData:
+                authType: default
+                defaultRegion: ${AWS::Region}
+                catalog: AwsDataCatalog
+                database: security_findings_db
+                workgroup: primary
+          EOL
+          
+          # Create dashboard provisioning configuration
+          cat > /grafana/provisioning/dashboards/default.yaml << 'EOL'
+          apiVersion: 1
+          providers:
+            - name: 'default'
+              orgId: 1
+              folder: 'cATO Dashboards'
+              type: file
+              disableDeletion: false
+              editable: true
+              updateIntervalSeconds: 30
+              allowUiUpdates: true
+              options:
+                path: /var/lib/grafana/dashboards
+          EOL
+          
+          # Create Executive Summary Dashboard
+          cat > /grafana/dashboards/executive-summary.json << 'EOL'
+          {
+            "annotations": {
+              "list": [ ]
+            },
+            "editable": true,
+            "fiscalYearStartMonth": 0,
+            "graphTooltip": 0,
+            "id": 1,
+            "links": [],
+            "liveNow": false,
+            "panels": [
+              {
+                "datasource": {
+                  "type": "grafana-athena-datasource",
+                  "uid": "P8E80F9AEF21F6940"
+                },
+                "description": "Overall compliance percentage across all controls",
+                "fieldConfig": {
+                  "defaults": {
+                    "color": {
+                      "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "max": 100,
+                    "min": 0,
+                    "thresholds": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "red",
+                          "value": null
+                        },
+                        {
+                          "color": "yellow",
+                          "value": 50
+                        },
+                        {
+                          "color": "green",
+                          "value": 80
+                        }
+                      ]
+                    },
+                    "unit": "percent"
+                  },
+                  "overrides": []
+                },
+                "gridPos": {
+                  "h": 8,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+                },
+                "id": 1,
+                "options": {
+                  "orientation": "auto",
+                  "reduceOptions": {
+                    "calcs": [
+                      "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                  },
+                  "showThresholdLabels": false,
+                  "showThresholdMarkers": true
+                },
+                "pluginVersion": "9.3.6",
+                "targets": [
+                  {
+                    "connectionArgs": {
+                      "catalog": "AwsDataCatalog",
+                      "database": "security_findings_db",
+                      "region": "${AWS::Region}",
+                      "resultReuseEnabled": true,
+                      "workgroup": "primary"
+                    },
+                    "format": 1,
+                    "rawSQL": "SELECT COUNT(CASE WHEN status = 'PASSED' THEN 1 END) * 100.0 / COUNT(*) as compliance_rate FROM security_findings",
+                    "refId": "A"
+                  }
+                ],
+                "title": "Overall Compliance Rate",
+                "type": "gauge"
+              }
+            ],
+            "refresh": "1h",
+            "schemaVersion": 38,
+            "style": "dark",
+            "tags": ["security", "compliance"],
+            "templating": {
+              "list": []
+            },
+            "time": {
+              "from": "now-30d",
+              "to": "now"
+            },
+            "timepicker": {},
+            "timezone": "",
+            "title": "cATO Executive Summary",
+            "uid": "cato-exec-summary",
+            "version": 1
+          }
+          EOL
+          
+          # Run Grafana with our configuration
+          docker run -d \
+            --name=grafana \
+            -p 3000:3000 \
+            -v /grafana/data:/var/lib/grafana \
+            -v /grafana/provisioning:/etc/grafana/provisioning \
+            -v /grafana/dashboards:/var/lib/grafana/dashboards \
+            -e "GF_SECURITY_ADMIN_USER=${AdminUsername}" \
+            -e "GF_SECURITY_ADMIN_PASSWORD=${AdminPassword}" \
+            -e "GF_AUTH_BASIC_ENABLED=true" \
+            -e "GF_AUTH_ANONYMOUS_ENABLED=false" \
+            -e "GF_INSTALL_PLUGINS=grafana-athena-datasource" \
+            grafana/grafana-oss:latest
+          
+          # Wait for Grafana to start
+          sleep 30
+          
+          # Create viewer user via API
+          curl -X POST -H "Content-Type: application/json" \
+            -d "{\"name\":\"Viewer User\",\"email\":\"viewer@example.com\",\"login\":\"${ViewerUsername}\",\"password\":\"${ViewerPassword}\",\"OrgId\":1,\"role\":\"Viewer\"}" \
+            http://${AdminUsername}:${AdminPassword}@localhost:3000/api/admin/users
+          
+          # Install cfn-signal
+          dnf install -y aws-cfn-bootstrap
+          
+          # Signal CloudFormation that setup is complete
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource GrafanaInstance --region ${AWS::Region}
+      
+      Tags:
+        - Key: Name
+          Value: Grafana-cATO-Dashboard
+      
+      CreationPolicy:
+        ResourceSignal:
+          Timeout: PT15M
+
+Outputs:
+  GrafanaURL:
+    Description: URL to access Grafana
+    Value: !Sub http://${GrafanaInstance.PublicDnsName}:3000
+    
+  GrafanaAdminUser:
+    Description: Grafana admin username
+    Value: !Ref AdminUsername
+    
+  GrafanaViewerUser:
+    Description: Grafana viewer username
+    Value: !Ref ViewerUsername 

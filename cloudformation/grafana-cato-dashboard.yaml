@@ -1,0 +1,427 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'cATO Dashboard with Self-Hosted Grafana'
+
+Parameters:
+  AdminUsername:
+    Type: String
+    Default: 'admin'
+    Description: Username for Grafana admin user
+  
+  AdminPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Password for Grafana admin user
+    ConstraintDescription: Must be at least 8 characters
+  
+  ViewerUsername:
+    Type: String
+    Default: 'viewer'
+    Description: Username for Grafana viewer user
+  
+  ViewerPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Password for Grafana viewer user
+    ConstraintDescription: Must be at least 8 characters
+  
+  InstanceType:
+    Type: String
+    Default: 't3.small'
+    AllowedValues: ['t3.micro', 't3.small', 't3.medium']
+    Description: EC2 Instance type for Grafana server
+    
+  AdminIpRange:
+    Type: String
+    Default: '0.0.0.0/0'
+    Description: CIDR IP range for SSH access to the Grafana server
+    
+  EnableHttps:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable HTTPS for Grafana
+    
+  AthenaDatabase:
+    Type: String
+    Default: 'security_findings_db'
+    Description: Athena database name containing security findings
+    
+  AthenaTable:
+    Type: String
+    Default: 'security_findings'
+    Description: Athena table name containing security findings
+
+Resources:
+  # Security Group for Grafana instance
+  GrafanaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Grafana server
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AdminIpRange
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+  
+  # IAM Role for Grafana to access AWS resources
+  GrafanaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonAthenaFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+  
+  # Instance Profile
+  GrafanaInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref GrafanaRole
+  
+  # EC2 Instance for Grafana
+  GrafanaInstance:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: ami-0261755bbcb8c4a84  # Amazon Linux 2023 (us-east-1)
+      SecurityGroupIds:
+        - !GetAtt GrafanaSecurityGroup.GroupId
+      IamInstanceProfile: !Ref GrafanaInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          
+          # Update system packages
+          dnf update -y
+          
+          # Install Docker
+          dnf install -y docker
+          systemctl enable docker.service
+          systemctl start docker.service
+          
+          # Create directories for Grafana persistence
+          mkdir -p /grafana/data /grafana/dashboards /grafana/provisioning
+          
+          # Create provisioning directories
+          mkdir -p /grafana/provisioning/datasources
+          mkdir -p /grafana/provisioning/dashboards
+          
+          # Create data source configuration for Athena
+          cat > /grafana/provisioning/datasources/athena.yaml << 'EOL'
+          apiVersion: 1
+          datasources:
+            - name: AWS Athena
+              type: grafana-athena-datasource
+              access: proxy
+              isDefault: true
+              jsonData:
+                authType: default
+                defaultRegion: ${AWS::Region}
+                catalog: AwsDataCatalog
+                database: ${AthenaDatabase}
+                workgroup: primary
+          EOL
+          
+          # Create dashboard provisioning configuration
+          cat > /grafana/provisioning/dashboards/default.yaml << 'EOL'
+          apiVersion: 1
+          providers:
+            - name: 'default'
+              orgId: 1
+              folder: 'cATO Dashboards'
+              type: file
+              disableDeletion: false
+              editable: true
+              updateIntervalSeconds: 30
+              allowUiUpdates: true
+              options:
+                path: /var/lib/grafana/dashboards
+          EOL
+          
+          # Create Executive Summary Dashboard
+          cat > /grafana/dashboards/executive-summary.json << 'EOL'
+          {
+            "annotations": {
+              "list": [ ]
+            },
+            "editable": true,
+            "fiscalYearStartMonth": 0,
+            "graphTooltip": 0,
+            "id": 1,
+            "links": [],
+            "liveNow": false,
+            "panels": [
+              {
+                "datasource": {
+                  "type": "grafana-athena-datasource",
+                  "uid": "P8E80F9AEF21F6940"
+                },
+                "description": "Overall compliance percentage across all controls",
+                "fieldConfig": {
+                  "defaults": {
+                    "color": {
+                      "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "max": 100,
+                    "min": 0,
+                    "thresholds": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "red",
+                          "value": null
+                        },
+                        {
+                          "color": "yellow",
+                          "value": 50
+                        },
+                        {
+                          "color": "green",
+                          "value": 80
+                        }
+                      ]
+                    },
+                    "unit": "percent"
+                  },
+                  "overrides": []
+                },
+                "gridPos": {
+                  "h": 8,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+                },
+                "id": 1,
+                "options": {
+                  "orientation": "auto",
+                  "reduceOptions": {
+                    "calcs": [
+                      "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                  },
+                  "showThresholdLabels": false,
+                  "showThresholdMarkers": true
+                },
+                "pluginVersion": "9.3.6",
+                "targets": [
+                  {
+                    "connectionArgs": {
+                      "catalog": "AwsDataCatalog",
+                      "database": "${AthenaDatabase}",
+                      "region": "${AWS::Region}",
+                      "resultReuseEnabled": true,
+                      "workgroup": "primary"
+                    },
+                    "format": 1,
+                    "rawSQL": "SELECT COUNT(CASE WHEN status = 'PASSED' THEN 1 END) * 100.0 / COUNT(*) as compliance_rate FROM ${AthenaTable}",
+                    "refId": "A"
+                  }
+                ],
+                "title": "Overall Compliance Rate",
+                "type": "gauge"
+              },
+              {
+                "datasource": {
+                  "type": "grafana-athena-datasource",
+                  "uid": "P8E80F9AEF21F6940"
+                },
+                "description": "Compliance by product",
+                "fieldConfig": {
+                  "defaults": {
+                    "color": {
+                      "mode": "thresholds"
+                    },
+                    "custom": {
+                      "axisCenteredZero": false,
+                      "axisColorMode": "text",
+                      "axisLabel": "",
+                      "axisPlacement": "auto",
+                      "fillOpacity": 80,
+                      "gradientMode": "none",
+                      "hideFrom": {
+                        "legend": false,
+                        "tooltip": false,
+                        "viz": false
+                      },
+                      "lineWidth": 1,
+                      "scaleDistribution": {
+                        "type": "linear"
+                      }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "red",
+                          "value": null
+                        },
+                        {
+                          "color": "yellow",
+                          "value": 50
+                        },
+                        {
+                          "color": "green",
+                          "value": 80
+                        }
+                      ]
+                    },
+                    "unit": "percent"
+                  },
+                  "overrides": []
+                },
+                "gridPos": {
+                  "h": 8,
+                  "w": 12,
+                  "x": 12,
+                  "y": 0
+                },
+                "id": 2,
+                "options": {
+                  "barRadius": 0,
+                  "barWidth": 0.97,
+                  "groupWidth": 0.7,
+                  "legend": {
+                    "calcs": [],
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                  },
+                  "orientation": "horizontal",
+                  "showValue": "auto",
+                  "stacking": "none",
+                  "tooltip": {
+                    "mode": "single",
+                    "sort": "none"
+                  },
+                  "xTickLabelRotation": 0,
+                  "xTickLabelSpacing": 0
+                },
+                "pluginVersion": "9.3.6",
+                "targets": [
+                  {
+                    "connectionArgs": {
+                      "catalog": "AwsDataCatalog",
+                      "database": "${AthenaDatabase}",
+                      "region": "${AWS::Region}",
+                      "resultReuseEnabled": true,
+                      "workgroup": "primary"
+                    },
+                    "format": 1,
+                    "rawSQL": "SELECT product_name, COUNT(CASE WHEN status = 'PASSED' THEN 1 END) * 100.0 / COUNT(*) as compliance_rate FROM ${AthenaTable} GROUP BY product_name ORDER BY compliance_rate ASC",
+                    "refId": "A"
+                  }
+                ],
+                "title": "Compliance by Product",
+                "type": "barchart"
+              }
+            ],
+            "refresh": "1h",
+            "schemaVersion": 38,
+            "style": "dark",
+            "tags": ["security", "compliance"],
+            "templating": {
+              "list": []
+            },
+            "time": {
+              "from": "now-30d",
+              "to": "now"
+            },
+            "timepicker": {},
+            "timezone": "",
+            "title": "cATO Executive Summary",
+            "uid": "cato-exec-summary",
+            "version": 1
+          }
+          EOL
+          
+          # Set up HTTPS if enabled
+          if [ "${EnableHttps}" = "true" ]; then
+            mkdir -p /grafana/certs
+            openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+              -keyout /grafana/certs/grafana.key \
+              -out /grafana/certs/grafana.crt \
+              -subj "/C=US/ST=State/L=City/O=Organization/CN=$(hostname)"
+            
+            HTTPS_ARGS="-e \"GF_SERVER_PROTOCOL=https\" \
+              -e \"GF_SERVER_CERT_FILE=/etc/grafana/certs/grafana.crt\" \
+              -e \"GF_SERVER_CERT_KEY=/etc/grafana/certs/grafana.key\" \
+              -v /grafana/certs:/etc/grafana/certs"
+          else
+            HTTPS_ARGS=""
+          fi
+          
+          # Run Grafana with our configuration
+          docker run -d \
+            --name=grafana \
+            -p 3000:3000 \
+            -v /grafana/data:/var/lib/grafana \
+            -v /grafana/provisioning:/etc/grafana/provisioning \
+            -v /grafana/dashboards:/var/lib/grafana/dashboards \
+            -e "GF_SECURITY_ADMIN_USER=${AdminUsername}" \
+            -e "GF_SECURITY_ADMIN_PASSWORD=${AdminPassword}" \
+            -e "GF_AUTH_BASIC_ENABLED=true" \
+            -e "GF_AUTH_ANONYMOUS_ENABLED=false" \
+            -e "GF_INSTALL_PLUGINS=grafana-athena-datasource" \
+            $HTTPS_ARGS \
+            grafana/grafana-oss:latest
+          
+          # Wait for Grafana to start
+          sleep 30
+          
+          # Create viewer user via API
+          curl -X POST -H "Content-Type: application/json" \
+            -d "{\"name\":\"Viewer User\",\"email\":\"viewer@example.com\",\"login\":\"${ViewerUsername}\",\"password\":\"${ViewerPassword}\",\"OrgId\":1,\"role\":\"Viewer\"}" \
+            http://${AdminUsername}:${AdminPassword}@localhost:3000/api/admin/users
+          
+          # Install cfn-signal
+          dnf install -y aws-cfn-bootstrap
+          
+          # Signal CloudFormation that setup is complete
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource GrafanaInstance --region ${AWS::Region}
+      
+      Tags:
+        - Key: Name
+          Value: Grafana-cATO-Dashboard
+
+Outputs:
+  GrafanaURL:
+    Description: URL to access Grafana
+    Value: !If 
+      - EnableHttpsCondition
+      - !Sub "https://${GrafanaInstance.PublicDnsName}:3000"
+      - !Sub "http://${GrafanaInstance.PublicDnsName}:3000"
+    
+  GrafanaAdminUser:
+    Description: Grafana admin username
+    Value: !Ref AdminUsername
+    
+  GrafanaViewerUser:
+    Description: Grafana viewer username
+    Value: !Ref ViewerUsername
+    
+  SSHCommand:
+    Description: Command to SSH into the Grafana instance
+    Value: !Sub "ssh ec2-user@${GrafanaInstance.PublicDnsName}"
+
+Conditions:
+  EnableHttpsCondition: !Equals [!Ref EnableHttps, 'true'] 
