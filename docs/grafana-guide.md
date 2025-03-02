@@ -1,10 +1,10 @@
 # GRC Professional's Guide to Amazon Managed Grafana for cATO Dashboard
 
-Welcome, GRC professional! After 20+ years in governance, risk, and compliance, I've learned that effective visualization of compliance data is crucial for maintaining a strong security posture. This guide will walk you through setting up Amazon Managed Grafana to create compelling visualizations of your Security Hub findings that will help you demonstrate compliance, track remediation efforts, and communicate risk effectively to stakeholders.
+Welcome, GRC professional! This guide will help you create compelling visualizations of your Security Hub findings that will help you demonstrate compliance, track remediation efforts, and communicate risk effectively to stakeholders.
+
+> **Note:** This guide assumes you have already completed the setup steps in the [Deployment Guide](deployment_guide.md), including creating your Grafana workspace and connecting it to your Athena data source.
 
 ## Why Grafana Will Transform Your GRC Program
-
-In my early days as a compliance officer, we'd manually compile security findings into static reports that were outdated the moment we sent them. Grafana changes everything for GRC professionals:
 
 1. **Compliance Visualization at Scale** - You'll have access to visualization types that make complex compliance data immediately understandable. Heat maps, gauges, and geo maps will help executives quickly grasp your compliance posture.
   
@@ -16,67 +16,11 @@ In my early days as a compliance officer, we'd manually compile security finding
 
 5. **Document Control Activities with Annotations** - Mark key compliance events directly on time-series data. This is invaluable for demonstrating control effectiveness to auditors and leadership.
 
-## Before You Start: GRC Professional's Checklist
+## Building Effective Compliance Dashboards
 
-I've learned the hard way that skipping prerequisites leads to hours of troubleshooting. Make sure you have:
+Now that your Grafana workspace is set up and connected to your compliance data (as outlined in the Deployment Guide), let's focus on creating dashboards that drive compliance decisions.
 
-1. **AWS Console Access** - You'll need admin-level access for creating Grafana workspaces
-2. **Deployed cATO Dashboard** - Confirm your CloudFormation stack completed successfully
-3. **Data Pipeline Flowing** - Verify Security Hub findings are actually landing in S3 and queryable via Athena (I'll show you how to check this)
-4. **IAM Permissions** - Make sure your user/role has permissions for Grafana workspace management
-5. **Domain Planning** - Think about your workspace domain name (e.g., "compliance-dashboard.grafana-workspace.aws")
-
-Pro tip: Keep your AWS region consistent across all services! I've spent entire afternoons troubleshooting cross-region permission issues that delayed critical compliance reporting.
-
-## Creating Your Grafana Workspace: The GRC Way
-
-### Step 1: Set Up Your Compliance Command Center
-
-When I started in GRC, setting up compliance monitoring tools took weeks. Now we can have a professional-grade compliance dashboard in minutes:
-
-1. Navigate to **Amazon Managed Grafana** in the AWS Console
-2. Click **Create workspace**
-3. Name it something meaningful like "Compliance-Dashboard" (avoid spaces - trust me on this)
-4. For authentication, I recommend **AWS IAM Identity Center** if you're just starting out. It's simpler than SAML, which we can tackle later when you're ready.
-5. Under service access, always choose **Service managed** unless you have a specific reason not to. Select **Amazon Athena** as a minimum, but I usually add CloudWatch too for a more complete compliance picture.
-6. Hit **Create workspace** and grab some coffee - this takes about 5-10 minutes.
-
-GRC insight: The workspace name matters! Choose something descriptive that clearly indicates the dashboard's compliance purpose. Your future self (and auditors) will thank you when managing multiple workspaces.
-
-### Step 2: Set Up Your Stakeholder Access
-
-A compliance dashboard is only valuable if the right stakeholders can access it:
-
-1. In your workspace details, go to the **Authentication** tab
-2. Click **Assign new user or group**
-3. When choosing roles, remember:
-   - **Admin** - For you and maybe one backup compliance officer (with great power...)
-   - **Editor** - For team members who need to create/modify compliance visualizations
-   - **Viewer** - For executives, auditors, and stakeholders who just need to see compliance data
-   
-A lesson from experience: Be judicious with Admin access! In my early days, I gave everyone Admin access for convenience, and we ended up with dozens of conflicting dashboard versions. Start with least privilege and expand only when necessary - a core principle of good governance.
-
-### Step 3: Connect to Your Compliance Data
-
-This is where the magic happens - connecting Grafana to your Athena-queryable security findings:
-
-1. Open your new Grafana workspace URL
-2. After logging in, click the **Configuration** (gear) icon in the sidebar
-3. Select **Data sources** and click **Add data source**
-4. Find and select **Amazon Athena**
-5. Here's how to configure it correctly:
-   - **Name**: "cATO Compliance Findings" (use a clear, descriptive name)
-   - **Authentication Provider**: AWS SDK Default (simplest approach)
-   - **Default Region**: Select your AWS region (MUST match your cATO deployment)
-   - **Catalog**: AwsDataCatalog
-   - **Database**: cato_security_findings_[timestamp] (check the actual name in Athena)
-   - **Workgroup**: primary
-   - **Output Location**: s3://cato-dashboard-data-[timestamp]-athena-results/
-6. Click **Save & Test** - a successful connection is your first win!
-
-Troubleshooting tip: If the connection fails, it's almost always permissions. Check that your Grafana workspace role has access to both Athena and the S3 bucket. I've lost count of how many times this tripped me up early in my compliance career!
-
-### Step 4: Create Dashboard Variables - Where GRC Professionals Excel
+### Step 1: Create Dashboard Variables - Where GRC Professionals Excel
 
 This is what separates basic compliance reporting from professional GRC dashboards. Variables make your dashboard interactive and powerful for risk-based decision making:
 
@@ -107,7 +51,7 @@ SELECT DISTINCT product_name FROM security_findings ORDER BY product_name
 
 Pro tip from my years of compliance reporting: Always enable multi-select and "All" options for your variables. This gives your stakeholders the flexibility to drill down into specific risk areas or see the big picture without needing separate dashboards.
 
-### Step 5: Build Insightful Compliance Panels - The Risk Communication Part
+### Step 2: Build Insightful Compliance Panels - The Risk Communication Part
 
 Let me show you how to create panels that actually drive compliance decisions - not just look pretty:
 
@@ -198,7 +142,7 @@ ORDER BY
 
 A color scheme from red (high) to green (low) intuitively shows risk concentration. This visualization has helped me identify systemic compliance issues that would have been invisible in tables or charts.
 
-### Step 6: Arranging Your Dashboard for Maximum Compliance Impact
+### Step 3: Arranging Your Dashboard for Maximum Compliance Impact
 
 Dashboard layout is risk storytelling. Here's the narrative flow I've found most effective over years of presenting to executives and auditors:
 
@@ -209,7 +153,7 @@ Dashboard layout is risk storytelling. Here's the narrative flow I've found most
 
 Remember to save your dashboard frequently! Nothing is worse than losing an hour of work because you forgot to save.
 
-### Step 7: Set Up Auto-Refresh (But Be Smart About It)
+### Step 4: Set Up Auto-Refresh (But Be Smart About It)
 
 After years of manually refreshing compliance dashboards before audit meetings, auto-refresh feels like magic:
 
@@ -218,7 +162,7 @@ After years of manually refreshing compliance dashboards before audit meetings, 
 
 GRC wisdom: Don't set refresh too frequently! If your compliance data updates daily, a 1-hour refresh is plenty. Excessive refreshing creates unnecessary load and can even incur higher costs.
 
-### Step 8: Sharing Your Dashboard - Making Your Compliance Work Count
+### Step 5: Sharing Your Dashboard - Making Your Compliance Work Count
 
 The most beautiful compliance dashboard provides zero value if the right stakeholders can't see it:
 

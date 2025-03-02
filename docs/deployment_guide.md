@@ -78,7 +78,8 @@ Follow the detailed instructions in the [Grafana Guide](grafana-guide.md) to:
 1. Create dashboard variables for filtering
 2. Build compliance visualization panels
 3. Arrange your dashboard for maximum impact
-4. Set up auto-refresh and sharing options
+
+> **Note:** The Grafana Guide focuses exclusively on building effective compliance dashboards and visualizations. It assumes you have already completed the setup steps in this deployment guide, including creating your Grafana workspace and connecting it to your Athena data source.
 
 ## Verifying Your Deployment
 
