@@ -43,18 +43,23 @@ After the CloudFormation deployment completes:
 1. Navigate to **Amazon Managed Grafana** in the AWS Console
 2. Click **Create workspace**
 3. Name it something meaningful like "Compliance-Dashboard"
-4. For authentication, select **AWS IAM Identity Center**
+4. For authentication, select **AWS IAM Identity Center** (recommended) or a SAML 2.0 compatible identity provider
 5. Under service access, choose **Service managed** and select **Amazon Athena** and **CloudWatch**
-6. Click **Create workspace** and wait for it to be created (5-10 minutes)
+6. Ensure you're creating the workspace in a supported region (US East, US West, Asia Pacific, or Europe regions)
+7. Click **Create workspace** and wait for it to be created (5-10 minutes)
+
+> **Note:** Amazon Managed Grafana is available in specific AWS regions including US East (Ohio), US East (N. Virginia), US West (Oregon), Asia Pacific (Seoul, Singapore, Sydney, Tokyo), and Europe (Frankfurt, Ireland, London). Ensure you deploy in a supported region.
 
 ### Step 4: Configure Grafana Access
 
 1. In your workspace details, go to the **Authentication** tab
 2. Click **Assign new user or group**
 3. Assign appropriate roles:
-   - **Admin** - For GRC team leads and administrators
+   - **Admin** - For GRC team leads and administrators who need to manage the workspace
    - **Editor** - For team members who need to create/modify visualizations
-   - **Viewer** - For executives, auditors, and stakeholders
+   - **Viewer** - For executives, auditors, and stakeholders who only need to view dashboards
+
+> **Note:** If using IAM Identity Center, ensure it's properly configured in your AWS account. If using SAML, you'll need to configure your identity provider with the appropriate metadata and attribute mappings. Refer to the [Amazon Managed Grafana Authentication documentation](https://docs.aws.amazon.com/grafana/latest/userguide/authentication-in-AMG.html) for detailed instructions.
 
 ### Step 5: Connect Grafana to Athena
 
@@ -75,7 +80,7 @@ After the CloudFormation deployment completes:
    - **Output Location**: s3://cato-dashboard-data-[timestamp]-athena-results/
 9. Click **Save & Test**
 
-> **Note:** The Grafana interface may change over time. If you notice differences, follow the general flow: install the Athena plugin, add a new data source, and configure it to connect to your Athena database.
+> **Note:** Amazon Managed Grafana uses AWS service roles to access AWS services. Ensure your Grafana workspace has the necessary permissions to access Athena and S3. You can modify the service role permissions in the IAM console if needed. For more details, refer to the [Amazon Managed Grafana Data Source Management documentation](https://docs.aws.amazon.com/grafana/latest/userguide/AMG-manage-data-source.html).
 
 ### Step 6: Create Your Dashboard
 

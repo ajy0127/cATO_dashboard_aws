@@ -6,15 +6,17 @@ Welcome, GRC professional! This guide will help you create compelling visualizat
 
 ## Why Grafana Will Transform Your GRC Program
 
-1. **Compliance Visualization at Scale** - You'll have access to visualization types that make complex compliance data immediately understandable. Heat maps, gauges, and geo maps will help executives quickly grasp your compliance posture.
+1. **Compliance Visualization at Scale** - Amazon Managed Grafana provides access to over 100 data source plugins, allowing you to create visualization types that make complex compliance data immediately understandable. Heat maps, gauges, and geo maps will help executives quickly grasp your compliance posture.
   
-2. **Holistic Risk View** - The real power move? Combining Athena, CloudWatch, and other sources in a single dashboard to show the relationship between compliance status, security events, and business risk.
+2. **Holistic Risk View** - Amazon Managed Grafana supports multiple AWS services as data sources, including Amazon Athena, AWS CloudWatch, Amazon OpenSearch Service, AWS IoT SiteWise, and Amazon Timestream. This allows you to combine compliance status, security events, and business risk in a single dashboard.
 
-3. **Real-time Compliance Monitoring** - Set it up once, and your compliance dashboards stay current. No more "this assessment is from last quarter" conversations with auditors.
+3. **Real-time Compliance Monitoring** - With Amazon Managed Grafana's support for automatic data refresh and alerting, your compliance dashboards stay current. No more "this assessment is from last quarter" conversations with auditors.
 
-4. **Automated Risk Alerting** - After years of building custom compliance monitoring systems, Grafana's built-in alerting feels like cheating. Set thresholds for compliance metrics and get notified when they breach acceptable levels.
+4. **Automated Risk Alerting** - Amazon Managed Grafana includes built-in alerting capabilities that allow you to set thresholds for compliance metrics and get notified when they breach acceptable levels.
 
-5. **Document Control Activities with Annotations** - Mark key compliance events directly on time-series data. This is invaluable for demonstrating control effectiveness to auditors and leadership.
+5. **Document Control Activities with Annotations** - Mark key compliance events directly on time-series data using Grafana's annotation feature. This is invaluable for demonstrating control effectiveness to auditors and leadership.
+
+6. **Enterprise-Grade Security** - Amazon Managed Grafana integrates with AWS IAM Identity Center and supports SAML 2.0 for authentication, ensuring secure access to your compliance dashboards.
 
 ## Building Effective Compliance Dashboards
 
@@ -24,12 +26,17 @@ Now that your Grafana workspace is set up and connected to your compliance data 
 
 ### Step 1: Create Dashboard Variables - Where GRC Professionals Excel
 
-This is what separates basic compliance reporting from professional GRC dashboards. Variables make your dashboard interactive and powerful for risk-based decision making:
+Variables make your dashboard interactive and powerful for risk-based decision making. Amazon Managed Grafana supports various types of variables including query variables, custom variables, and text box variables.
 
 1. Create a new dashboard by clicking on **Dashboards** in the left sidebar and then **+ New Dashboard**
 2. Click the gear icon in the top right for dashboard settings
 3. Go to the **Variables** tab and click **Add variable**
-4. Add these essential compliance filters:
+4. For each variable, select the type **Query** and configure:
+   - **Name**: The variable name (e.g., "severity")
+   - **Label**: The display name (e.g., "Severity")
+   - **Data source**: Your Athena data source
+   - **Query**: The SQL query (examples below)
+   - **Selection options**: Enable "Include All option" and "Multi-value" for flexibility
 
 **Severity Variable**:
 ```sql
@@ -53,11 +60,17 @@ SELECT DISTINCT status FROM security_findings ORDER BY status
 SELECT DISTINCT product_name FROM security_findings ORDER BY product_name
 ```
 
-Pro tip from my years of compliance reporting: Always enable multi-select and "All" options for your variables. This gives your stakeholders the flexibility to drill down into specific risk areas or see the big picture without needing separate dashboards.
+Pro tip: Always enable multi-select and "All" options for your variables. This gives your stakeholders the flexibility to drill down into specific risk areas or see the big picture without needing separate dashboards.
 
 ### Step 2: Build Insightful Compliance Panels - The Risk Communication Part
 
-Let me show you how to create panels that actually drive compliance decisions - not just look pretty:
+Amazon Managed Grafana supports a wide range of visualization types. Here's how to create panels that drive compliance decisions:
+
+1. Click **Add panel** in your dashboard
+2. Select the visualization type appropriate for your data (e.g., Stat, Bar chart, Pie chart)
+3. Configure the data source as your Athena connection
+4. Enter the SQL query (examples below)
+5. Use the panel options to customize appearance, thresholds, and other settings
 
 #### The Executive Summary KPI
 
@@ -231,30 +244,39 @@ def update_grafana_dashboard(findings_count):
 
 This is one of those small touches that dramatically improves the compliance user experience by showing exactly when control data was refreshed - a key consideration for audit evidence.
 
-## Troubleshooting: Wisdom from My 20 Years of GRC Mistakes
+## Troubleshooting: Common Issues with Amazon Managed Grafana
 
-I've made every possible mistake with compliance dashboards. Here's what to check when things go wrong:
+When working with Amazon Managed Grafana for compliance dashboards, you may encounter these common issues:
 
 ### 1. Data Source Connection Issues
-- First suspect: **IAM permissions**. Verify that your Grafana workspace has the right permissions for Athena and S3.
-- Second suspect: **Region mismatch**. Ensure your Grafana data source is pointing to the same region as your compliance resources.
-- Third suspect: **Resource names**. Double-check database, table, and S3 bucket names for typos or incorrect references.
+- **IAM permissions**: Verify that your Grafana workspace has the right permissions for Athena and S3. Check the service role attached to your Grafana workspace in the IAM console.
+- **Region mismatch**: Ensure your Grafana data source is pointing to the same region as your compliance resources.
+- **Resource names**: Double-check database, table, and S3 bucket names for typos or incorrect references.
+- **VPC connectivity**: If your Grafana workspace is in a VPC, ensure proper network connectivity to your AWS resources.
 
 ### 2. "No Data" in Compliance Visualizations
-- Check if your field names are lowercase (e.g., `severity` instead of `Severity`) - this trips up new GRC professionals constantly.
+- Check if your field names are lowercase (e.g., `severity` instead of `Severity`) - case sensitivity matters in SQL queries.
 - Run your queries directly in Athena to verify they return compliance data.
 - Check your variable references - they should use the format `${variable:sqlstring}` in your queries.
+- Verify the time range selected in your dashboard is appropriate for your data.
 
 ### 3. Performance Issues
 - Limit the amount of data you query by using effective WHERE clauses.
 - Consider using aggregation queries instead of pulling all raw compliance data.
 - If dashboard load times are slow, check which panels are taking the longest and optimize their queries.
+- Use Athena workgroups with query result reuse to improve performance.
 
 ### 4. Authentication Problems
-- For IAM Identity Center: Verify user assignments and roles.
-- For SAML: Check IdP configurations and attribute mappings (this can be tricky!).
+- For IAM Identity Center: Verify user assignments and roles in the IAM Identity Center console.
+- For SAML: Check IdP configurations and attribute mappings in both your identity provider and Grafana workspace settings.
+- Review the [Amazon Managed Grafana Authentication Troubleshooting guide](https://docs.aws.amazon.com/grafana/latest/userguide/troubleshooting-AMG-authentication.html) for specific solutions.
 
-Remember: Grafana logs can be your best friend when troubleshooting. Check them for clues when things aren't working as expected.
+### 5. Plugin Installation Issues
+- If you can't install or access the Athena plugin, verify your Grafana workspace has internet access.
+- Check if your Grafana workspace version supports the plugin you're trying to install.
+- Review the service access settings for your workspace to ensure it has permission to access the required AWS services.
+
+For more troubleshooting assistance, refer to the [Amazon Managed Grafana Troubleshooting documentation](https://docs.aws.amazon.com/grafana/latest/userguide/troubleshooting-AMG.html).
 
 ## Your Next Steps as a GRC Professional
 
@@ -291,10 +313,13 @@ Feel free to reach out with questions as you build your compliance dashboard. We
 
 ## Additional Resources
 
-After 20 years in GRC, here are the resources I still refer to regularly:
+Here are essential resources for working with Amazon Managed Grafana for compliance dashboards:
 
-- [Amazon Managed Grafana Documentation](https://docs.aws.amazon.com/grafana/latest/userguide/what-is-Amazon-Managed-Service-Grafana.html)
-- [Grafana SQL Fundamentals](https://grafana.com/docs/grafana/latest/datasources/sql/)
-- [Security Compliance Visualization Best Practices](https://grafana.com/blog/2021/01/11/how-to-visualize-security-data/)
-- [AWS Security Hub User Guide](https://docs.aws.amazon.com/securityhub/latest/userguide/what-is-securityhub.html)
-- [Amazon Athena SQL Reference](https://docs.aws.amazon.com/athena/latest/ug/ddl-sql-reference.html) - bookmark this one! 
+- [Amazon Managed Grafana Documentation](https://docs.aws.amazon.com/grafana/latest/userguide/what-is-Amazon-Managed-Service-Grafana.html) - Official AWS documentation for Amazon Managed Grafana
+- [Amazon Managed Grafana Workshop](https://catalog.workshops.aws/observability/en-US/amg) - Hands-on workshop for learning Amazon Managed Grafana
+- [Grafana SQL Fundamentals](https://grafana.com/docs/grafana/latest/datasources/sql/) - Guide to working with SQL data sources in Grafana
+- [Amazon Athena User Guide](https://docs.aws.amazon.com/athena/latest/ug/what-is.html) - Comprehensive guide to using Amazon Athena
+- [AWS Security Hub User Guide](https://docs.aws.amazon.com/securityhub/latest/userguide/what-is-securityhub.html) - Documentation for AWS Security Hub
+- [Amazon Athena SQL Reference](https://docs.aws.amazon.com/athena/latest/ug/ddl-sql-reference.html) - Reference for Athena SQL commands and functions
+- [Grafana Alerting Documentation](https://grafana.com/docs/grafana/latest/alerting/) - Guide to setting up alerts in Grafana
+- [AWS Security Blog](https://aws.amazon.com/blogs/security/) - Blog posts about AWS security services and best practices 
