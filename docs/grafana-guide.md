@@ -60,9 +60,9 @@ SELECT DISTINCT status FROM security_findings ORDER BY status
 SELECT DISTINCT product_name FROM security_findings ORDER BY product_name
 ```
 
-Pro tip: Always enable multi-select and "All" options for your variables. This gives your stakeholders the flexibility to drill down into specific risk areas or see the big picture without needing separate dashboards.
+**Best Practice**: Always enable multi-select and "All" options for your variables. This gives your stakeholders the flexibility to drill down into specific risk areas or see the big picture without needing separate dashboards.
 
-### Step 2: Build Insightful Compliance Panels - The Risk Communication Part
+### Step 2: Build Insightful Compliance Panels for Risk Communication
 
 Amazon Managed Grafana supports a wide range of visualization types. Here's how to create panels that drive compliance decisions:
 
@@ -74,7 +74,7 @@ Amazon Managed Grafana supports a wide range of visualization types. Here's how 
 
 #### The Executive Summary KPI
 
-Every executive and auditor wants this number first - overall compliance percentage:
+This visualization shows the overall compliance percentage:
 
 ```sql
 SELECT COUNT(CASE WHEN status = 'PASSED' THEN 1 END) * 100.0 / COUNT(*) as compliance_rate
@@ -82,7 +82,7 @@ FROM security_findings
 WHERE severity IN (${severity:sqlstring}) AND status IN (${status:sqlstring}) AND product_name IN (${product:sqlstring})
 ```
 
-Style it with intuitive thresholds: 0-50% red, 50-80% yellow, 80-100% green. This creates immediate visual understanding of compliance status.
+**Best Practice**: Style it with intuitive thresholds: 0-50% red, 50-80% yellow, 80-100% green. This creates immediate visual understanding of compliance status.
 
 #### The Service Owner's Accountability Chart
 
@@ -98,11 +98,11 @@ GROUP BY product_name
 ORDER BY compliance_rate ASC
 ```
 
-GRC trick: Ordering by compliance_rate ASC puts the worst performers at the top - this focuses remediation attention exactly where it's needed.
+**Best Practice**: Ordering by compliance_rate ASC puts the worst performers at the top - this focuses remediation attention exactly where it's needed.
 
-#### Control Status Distribution - The Auditor's Favorite
+#### Control Status Distribution
 
-This donut chart gives auditors a quick view of control status distribution:
+This donut chart gives a quick view of control status distribution:
 
 ```sql
 SELECT 
@@ -113,11 +113,11 @@ WHERE severity IN (${severity:sqlstring}) AND status IN (${status:sqlstring}) AN
 GROUP BY status
 ```
 
-A lesson from experience: Use consistent colors across your dashboard for status values. If "PASSED" is green in one chart, make sure it's green everywhere. Consistency is key for effective compliance communication.
+**Best Practice**: Use consistent colors across your dashboard for status values. If "PASSED" is green in one chart, make sure it's green everywhere. Consistency is key for effective compliance communication.
 
 #### The Risk-Focused Controls Table
 
-This table highlights your critical controls - the ones that keep CISOs and compliance officers up at night:
+This table highlights critical controls:
 
 ```sql
 SELECT 
@@ -132,11 +132,11 @@ WHERE severity = 'CRITICAL' AND severity IN (${severity:sqlstring}) AND status I
 ORDER BY status DESC
 ```
 
-GRC insight: In my early days, I'd try to show ALL the controls. Focus on what matters - critical severity items get immediate attention and action. This risk-based approach is what modern compliance programs are built on.
+**Best Practice**: Focus on what matters - critical severity items get immediate attention and action. This risk-based approach is what modern compliance programs are built on.
 
-#### The Risk Heat Map - Your Compliance Secret Weapon
+#### The Risk Heat Map
 
-This visualization changed my GRC career - it shows exactly where risk concentrates across your environment:
+This visualization shows exactly where risk concentrates across your environment:
 
 ```sql
 SELECT 
@@ -157,31 +157,31 @@ ORDER BY
   product_name
 ```
 
-A color scheme from red (high) to green (low) intuitively shows risk concentration. This visualization has helped me identify systemic compliance issues that would have been invisible in tables or charts.
+**Best Practice**: Use a color scheme from red (high) to green (low) to intuitively show risk concentration. This visualization helps identify systemic compliance issues that might be invisible in tables or charts.
 
 ### Step 3: Arranging Your Dashboard for Maximum Compliance Impact
 
-Dashboard layout is risk storytelling. Here's the narrative flow I've found most effective over years of presenting to executives and auditors:
+Dashboard layout is risk storytelling. Here's an effective narrative flow for presenting to executives and auditors:
 
 1. Place your Overall Compliance KPI at the top - this answers the first question everyone asks
 2. Position the Compliance by Product and Status Distribution side by side - they complement each other
 3. Place the Risk Heat Map prominently - it's visually engaging and information-dense
 4. Put the Critical Controls table at the bottom - it's detailed information for those who want to dig deeper into specific control failures
 
-Remember to save your dashboard frequently! Nothing is worse than losing an hour of work because you forgot to save.
+**Best Practice**: Save your dashboard frequently to avoid losing work.
 
-### Step 4: Set Up Auto-Refresh (But Be Smart About It)
+### Step 4: Set Up Auto-Refresh
 
-After years of manually refreshing compliance dashboards before audit meetings, auto-refresh feels like magic:
+Auto-refresh keeps your compliance dashboards current without manual intervention:
 
 1. Click the time range selector in the dashboard navigation
 2. Set an appropriate refresh interval based on your data update frequency
 
-GRC wisdom: Don't set refresh too frequently! If your compliance data updates daily, a 1-hour refresh is plenty. Excessive refreshing creates unnecessary load and can even incur higher costs.
+**Best Practice**: Don't set refresh too frequently. If your compliance data updates daily, a 1-hour refresh is sufficient. Excessive refreshing creates unnecessary load and can incur higher costs.
 
-### Step 5: Sharing Your Dashboard - Making Your Compliance Work Count
+### Step 5: Sharing Your Dashboard
 
-The most beautiful compliance dashboard provides zero value if the right stakeholders can't see it:
+Ensure your compliance dashboard reaches the right stakeholders:
 
 1. Click the share icon in the top navigation
 2. For regular stakeholders, make sure they have Viewer access to the workspace
@@ -190,11 +190,11 @@ The most beautiful compliance dashboard provides zero value if the right stakeho
    - Exporting to PDF for inclusion in audit reports
    - Setting up email reports for executives and auditors
 
-Pro tip: Before important audit meetings, always check your dashboard access by opening an incognito browser window and logging in as a viewer. I've had too many "let me just share my screen instead" moments in my compliance career!
+**Best Practice**: Before important audit meetings, check your dashboard access by opening an incognito browser window and logging in as a viewer to ensure everything displays correctly.
 
 ## Taking It Further: Automating with Python
 
-Want to really impress your audit team? Here's how to update your Lambda function to automatically add annotations to your dashboard when new findings are processed:
+Enhance your compliance dashboard by automatically adding annotations when new findings are processed:
 
 ```python
 def update_grafana_dashboard(findings_count):
@@ -242,7 +242,7 @@ def update_grafana_dashboard(findings_count):
         # Non-critical, continue anyway
 ```
 
-This is one of those small touches that dramatically improves the compliance user experience by showing exactly when control data was refreshed - a key consideration for audit evidence.
+**Best Practice**: Adding annotations to mark data refresh times provides valuable context for audit evidence, showing exactly when control data was last updated.
 
 ## Troubleshooting: Common Issues with Amazon Managed Grafana
 
@@ -280,7 +280,7 @@ For more troubleshooting assistance, refer to the [Amazon Managed Grafana Troubl
 
 ## Your Next Steps as a GRC Professional
 
-Once you've mastered the basics, try these techniques to level up your compliance visualization skills:
+Once you've mastered the basics, try these techniques to enhance your compliance visualization skills:
 
 1. **Create Calculated Compliance Fields** in your queries for better risk analysis:
    ```sql
@@ -307,9 +307,7 @@ Once you've mastered the basics, try these techniques to level up your complianc
 
 3. **Add Compliance Threshold Alerts** to notify your team when compliance drops below acceptable levels.
 
-I've found that mastering these advanced techniques is what separates good GRC professionals from great ones. They enable you to go beyond reporting compliance data to actually driving meaningful improvements in your organization's security posture.
-
-Feel free to reach out with questions as you build your compliance dashboard. We've all been beginners in GRC, and I'm here to help you grow into the compliance visualization expert your organization needs!
+These advanced techniques enable you to go beyond reporting compliance data to driving meaningful improvements in your organization's security posture.
 
 ## Additional Resources
 
