@@ -82,7 +82,7 @@ aws s3 cp security_hub_integration.zip s3://$LAMBDA_BUCKET/ --region $AWS_REGION
 
 cd ..
 
-# Deploy with CloudFormation - Simplified deployment only
+# Deploy with CloudFormation
 echo "Deploying CloudFormation stack..."
 
 STACK_NAME="cato-dashboard-$(date +%Y%m%d)"
@@ -116,7 +116,7 @@ fi
 echo "Creating new CloudFormation stack: $STACK_NAME"
 aws cloudformation create-stack \
   --stack-name $STACK_NAME \
-  --template-body file://cloudformation/cato-dashboard-simplified.yaml \
+  --template-body file://cloudformation/cato-dashboard.yaml \
   --parameters \
     ParameterKey=S3BucketName,ParameterValue=$DATA_BUCKET \
     ParameterKey=LambdaCodeBucket,ParameterValue=$LAMBDA_BUCKET \

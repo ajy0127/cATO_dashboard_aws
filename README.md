@@ -133,7 +133,7 @@ Amazon Athena provides several advantages for analyzing security findings:
 
 ## Your First Adventure
 
-Want to jump right in? Here's your GRC-to-cloud engineering adventure path:
+Want to jump right in? Here's your GRC engineering adventure path:
 
 1. **Setup AWS Environment**: Make sure you have AWS CLI configured and access to create resources (15 mins).
 2. **Enable Security Hub**: Make sure Security Hub is enabled in your AWS account—this is where all your compliance findings will come from!
@@ -153,9 +153,9 @@ Detailed steps are provided in the Quick Start section below, but this is your b
 
 ## Quick Start
 
-### Option 1: Simplified Deployment (Security Hub Integration Only)
+### Deployment with Grafana Integration
 
-This option sets up the automated data collection from Security Hub without Grafana integration.
+Follow these steps to deploy the cATO Dashboard with Grafana integration:
 
 #### Step 1: Clone the Repository
 
@@ -188,22 +188,34 @@ aws s3 cp security_hub_integration.zip s3://$LAMBDA_BUCKET/
 cd ..
 ```
 
-#### Step 4: Deploy with CloudFormation
+#### Step 4: Set up Amazon Managed Grafana
+
+1. Set up an Amazon Managed Grafana workspace following the instructions in `docs/grafana-guide.md`.
+
+2. Create an API key in your Grafana workspace:
+   - Navigate to your Grafana workspace
+   - Go to Configuration > API Keys
+   - Create a new API key with Admin permissions
+   - Copy the API key (you won't be able to see it again)
+
+#### Step 5: Deploy with CloudFormation
 
 ```bash
 aws cloudformation create-stack \
   --stack-name cato-dashboard \
-  --template-body file://cloudformation/cato-dashboard-simplified.yaml \
+  --template-body file://cloudformation/cato-dashboard.yaml \
   --parameters \
     ParameterKey=S3BucketName,ParameterValue=$DATA_BUCKET \
     ParameterKey=LambdaCodeBucket,ParameterValue=$LAMBDA_BUCKET \
     ParameterKey=LambdaCodeKey,ParameterValue=security_hub_integration.zip \
     ParameterKey=CreateS3Bucket,ParameterValue=false \
-    ParameterKey=GrafanaIntegration,ParameterValue=false \
+    ParameterKey=GrafanaURL,ParameterValue=https://your-grafana-workspace-url \
+    ParameterKey=GrafanaAPIKey,ParameterValue=your-api-key \
+    ParameterKey=GrafanaDashboardID,ParameterValue=your-dashboard-id \
   --capabilities CAPABILITY_NAMED_IAM
 ```
 
-#### Step 5: Monitor the Deployment
+#### Step 6: Monitor the Deployment
 
 ```bash
 # Check stack status
@@ -214,37 +226,9 @@ aws cloudformation describe-stacks \
 
 The deployment typically takes 3-5 minutes. Once complete, Security Hub findings will be automatically collected and stored in the S3 bucket.
 
-### Option 2: Full Deployment with Grafana Integration
+#### Step 7: Set Up Your Dashboard
 
-To deploy with Grafana integration:
-
-1. First, set up an Amazon Managed Grafana workspace following the instructions in `docs/grafana-guide.md`.
-
-2. Create an API key in your Grafana workspace:
-   - Navigate to your Grafana workspace
-   - Go to Configuration > API Keys
-   - Create a new API key with Admin permissions
-   - Copy the API key (you won't be able to see it again)
-
-3. Deploy the CloudFormation stack with Grafana parameters:
-
-```bash
-aws cloudformation create-stack \
-  --stack-name cato-dashboard \
-  --template-body file://cloudformation/cato-dashboard-simplified.yaml \
-  --parameters \
-    ParameterKey=S3BucketName,ParameterValue=$DATA_BUCKET \
-    ParameterKey=LambdaCodeBucket,ParameterValue=$LAMBDA_BUCKET \
-    ParameterKey=LambdaCodeKey,ParameterValue=security_hub_integration.zip \
-    ParameterKey=CreateS3Bucket,ParameterValue=false \
-    ParameterKey=GrafanaIntegration,ParameterValue=true \
-    ParameterKey=GrafanaURL,ParameterValue=https://your-grafana-workspace-url \
-    ParameterKey=GrafanaAPIKey,ParameterValue=your-api-key \
-    ParameterKey=GrafanaDashboardID,ParameterValue=your-dashboard-id \
-  --capabilities CAPABILITY_NAMED_IAM
-```
-
-4. Follow the instructions in `docs/grafana-guide.md` to set up your dashboard.
+Follow the instructions in `docs/grafana-guide.md` to set up your dashboard and visualize your security compliance data.
 
 ## How It Works
 
@@ -392,7 +376,6 @@ This script will:
    - Check the Lambda function logs in CloudWatch
    - Verify that the Lambda has the correct permissions
    - Make sure Security Hub is enabled and accessible
-   - If using the full template, consider the simplified version first
    - **EventBridge Rule Name Length**: AWS EventBridge rule names have a 64-character limit. If your deployment generates long names (especially with timestamps and random suffixes), the deployment may fail. The template has been updated to use shorter names, but if you're using a custom version, ensure rule names are within limits.
 
 2. **Security Hub Findings Not Appearing**
