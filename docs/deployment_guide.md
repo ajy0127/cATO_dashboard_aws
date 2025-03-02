@@ -59,10 +59,13 @@ After the CloudFormation deployment completes:
 ### Step 5: Connect Grafana to Athena
 
 1. Open your new Grafana workspace URL
-2. After logging in, click the **Configuration** (gear) icon in the sidebar
-3. Select **Data sources** and click **Add data source**
-4. Find and select **Amazon Athena**
-5. Configure it with:
+2. After logging in, navigate to the left sidebar and click on **Apps**
+3. Scroll down to find **Athena** in the list of available apps
+4. Click the **Install now** button next to Athena
+5. Once installed, click on **Connections** in the left sidebar
+6. Click **Add new connection** and select **Data sources**
+7. Find and select **Amazon Athena**
+8. Configure it with:
    - **Name**: "cATO Compliance Findings"
    - **Authentication Provider**: AWS SDK Default
    - **Default Region**: Select your AWS region (MUST match your cATO deployment)
@@ -70,7 +73,9 @@ After the CloudFormation deployment completes:
    - **Database**: cato_security_findings_[timestamp] (check the actual name in Athena)
    - **Workgroup**: primary
    - **Output Location**: s3://cato-dashboard-data-[timestamp]-athena-results/
-6. Click **Save & Test**
+9. Click **Save & Test**
+
+> **Note:** The Grafana interface may change over time. If you notice differences, follow the general flow: install the Athena plugin, add a new data source, and configure it to connect to your Athena database.
 
 ### Step 6: Create Your Dashboard
 

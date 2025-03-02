@@ -20,12 +20,16 @@ Welcome, GRC professional! This guide will help you create compelling visualizat
 
 Now that your Grafana workspace is set up and connected to your compliance data (as outlined in the Deployment Guide), let's focus on creating dashboards that drive compliance decisions.
 
+> **Important:** The Grafana interface may have changed since this guide was written. You'll need to first install the Athena plugin from the Apps section before you can connect to your compliance data. Follow the steps in the Deployment Guide for the most up-to-date instructions.
+
 ### Step 1: Create Dashboard Variables - Where GRC Professionals Excel
 
 This is what separates basic compliance reporting from professional GRC dashboards. Variables make your dashboard interactive and powerful for risk-based decision making:
 
-1. Create a new dashboard and click the gear icon for settings
-2. Go to the **Variables** tab and add these essential compliance filters:
+1. Create a new dashboard by clicking on **Dashboards** in the left sidebar and then **+ New Dashboard**
+2. Click the gear icon in the top right for dashboard settings
+3. Go to the **Variables** tab and click **Add variable**
+4. Add these essential compliance filters:
 
 **Severity Variable**:
 ```sql
