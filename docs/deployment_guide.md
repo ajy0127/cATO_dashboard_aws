@@ -1,6 +1,6 @@
 # Deployment Guide for cATO Dashboard
 
-This guide provides step-by-step instructions for deploying the cATO Dashboard with Security Hub integration. The Grafana dashboard setup is handled as a separate manual process after deployment (see the Grafana Integration Guide for details).
+This guide provides step-by-step instructions for deploying the cATO Dashboard with AWS Security Hub integration and Amazon Managed Grafana visualization.
 
 ## Prerequisites
 
@@ -9,45 +9,20 @@ Before you begin, make sure you have the following:
 1. **AWS Account** with permissions to create IAM roles, Lambda functions, S3 buckets, Athena resources, and EventBridge rules
 2. **AWS Security Hub** enabled with NIST 800-53 standard activated
 3. **AWS CLI** installed and configured with appropriate access credentials
-4. **Amazon Managed Grafana** workspace (only if you plan to set up the Grafana dashboard after deployment)
-5. **Python 3.8+** installed (for local testing and development)
-
-### Setting Up AWS CLI Profiles (Optional)
-
-AWS CLI profiles allow you to manage multiple sets of AWS credentials, which is useful if you need to deploy to different AWS accounts or regions.
-
-To create a new AWS CLI profile:
-
-```bash
-aws configure --profile your-profile-name
-```
-
-You'll be prompted to enter:
-- AWS Access Key ID
-- AWS Secret Access Key
-- Default region name (e.g., us-east-1)
-- Default output format (json recommended)
-
-To list your existing profiles:
-
-```bash
-aws configure list-profiles
-```
+4. **Python 3.8+** installed (for local testing and development)
 
 ## Deployment Process
 
-The deployment script will guide you through setting up the Security Hub integration component of the cATO Dashboard.
-
-### Clone the Repository
+### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/cato-dashboard.git
-cd cato-dashboard
+git clone https://github.com/ajy0127/cATO_dashboard_aws.git
+cd cATO_dashboard_aws
 ```
 
-### Run the Deployment Script
+### Step 2: Run the Deployment Script
 
-Make the deployment script executable:
+The deployment script will guide you through setting up the entire cATO Dashboard solution:
 
 ```bash
 chmod +x scripts/deploy_dashboard.sh
@@ -58,147 +33,72 @@ The script will:
 1. Create an S3 bucket for Lambda code
 2. Create an S3 bucket for Security Hub findings data
 3. Package and upload the Lambda function
-4. Deploy the CloudFormation stack
+4. Deploy the CloudFormation stack with Grafana integration
 5. Set up initial data collection
 
-### Manual Deployment (Alternative)
+### Step 3: Set up Amazon Managed Grafana
 
-If you prefer to deploy manually or need more control over the process, follow these steps:
+After the CloudFormation deployment completes:
 
-#### 1. Create S3 Buckets
+1. Navigate to **Amazon Managed Grafana** in the AWS Console
+2. Click **Create workspace**
+3. Name it something meaningful like "Compliance-Dashboard"
+4. For authentication, select **AWS IAM Identity Center**
+5. Under service access, choose **Service managed** and select **Amazon Athena** and **CloudWatch**
+6. Click **Create workspace** and wait for it to be created (5-10 minutes)
 
-Create two S3 buckets:
-- One for Lambda code
-- One for Security Hub findings data
+### Step 4: Configure Grafana Access
 
-```bash
-aws s3 mb s3://your-lambda-code-bucket --region your-region
-aws s3 mb s3://your-findings-data-bucket --region your-region
-```
+1. In your workspace details, go to the **Authentication** tab
+2. Click **Assign new user or group**
+3. Assign appropriate roles:
+   - **Admin** - For GRC team leads and administrators
+   - **Editor** - For team members who need to create/modify visualizations
+   - **Viewer** - For executives, auditors, and stakeholders
 
-#### 2. Package and Upload Lambda Code
+### Step 5: Connect Grafana to Athena
 
-```bash
-cd src
-zip -r ../lambda_function.zip lambda_function.py
-cd ..
-aws s3 cp lambda_function.zip s3://your-lambda-code-bucket/
-```
+1. Open your new Grafana workspace URL
+2. After logging in, click the **Configuration** (gear) icon in the sidebar
+3. Select **Data sources** and click **Add data source**
+4. Find and select **Amazon Athena**
+5. Configure it with:
+   - **Name**: "cATO Compliance Findings"
+   - **Authentication Provider**: AWS SDK Default
+   - **Default Region**: Select your AWS region (MUST match your cATO deployment)
+   - **Catalog**: AwsDataCatalog
+   - **Database**: cato_security_findings_[timestamp] (check the actual name in Athena)
+   - **Workgroup**: primary
+   - **Output Location**: s3://cato-dashboard-data-[timestamp]-athena-results/
+6. Click **Save & Test**
 
-#### 3. Deploy CloudFormation Stack
+### Step 6: Create Your Dashboard
 
-```bash
-aws cloudformation deploy \
-  --template-file cloudformation/cato-dashboard.yaml \
-  --stack-name cato-dashboard \
-  --capabilities CAPABILITY_IAM \
-  --parameter-overrides \
-    S3BucketName=your-findings-data-bucket \
-    LambdaCodeBucket=your-lambda-code-bucket \
-    LambdaCodeKey=lambda_function.zip \
-    CreateS3Bucket=false \
-    CreateAthenaResultsBucket=true \
-    LambdaFunctionName=cato-security-hub-integration \
-    AthenaDatabaseName=cato_security_findings \
-    GrafanaIntegration=false
-```
+Follow the detailed instructions in the [Grafana Guide](grafana-guide.md) to:
+1. Create dashboard variables for filtering
+2. Build compliance visualization panels
+3. Arrange your dashboard for maximum impact
+4. Set up auto-refresh and sharing options
 
-## Testing the Deployment
+## Verifying Your Deployment
 
 To verify that the deployment was successful:
 
 1. Check that the Lambda function is running correctly:
 ```bash
-aws lambda invoke --function-name cato-security-hub-integration --payload '{}' response.json
-cat response.json
+aws lambda invoke --function-name cato-security-hub-integration-[timestamp] --payload '{}' response.json --profile your-profile
 ```
 
 2. Check that data is being collected in the S3 bucket:
 ```bash
-aws s3 ls s3://your-findings-data-bucket/ --recursive
+aws s3 ls s3://cato-dashboard-data-[timestamp]/ --recursive --profile your-profile
 ```
 
-3. Run the automated tests:
+3. Verify that the Athena database and table were created:
 ```bash
-./scripts/run_tests.sh
+aws athena list-databases --catalog-name AwsDataCatalog --profile your-profile
+aws athena list-table-metadata --catalog-name AwsDataCatalog --database-name cato_security_findings_[timestamp] --profile your-profile
 ```
-
-### Check Deployment Status
-
-Monitor the CloudFormation stack creation:
-
-```bash
-aws cloudformation describe-stacks \
-  --stack-name cato-dashboard-YYYYMMDD \
-  --profile <your-profile-name> \
-  --query 'Stacks[0].StackStatus'
-```
-
-The deployment is complete when the status is `CREATE_COMPLETE`.
-
-### Verify Deployment
-
-Verify that the deployment was successful by checking the following:
-
-1. Check if the S3 bucket was created and contains data:
-
-```bash
-aws s3 ls s3://cato-dashboard-data-<timestamp>-<random>/ --profile <your-profile-name>
-```
-
-2. Test the Lambda function by invoking it (use the unique Lambda function name shown during deployment):
-
-```bash
-aws lambda invoke \
-  --function-name cato-security-hub-integration-<timestamp>-<random> \
-  --profile <your-profile-name> \
-  --payload '{}' \
-  response.json
-```
-
-3. Check CloudWatch Logs for the Lambda function:
-
-```bash
-aws logs get-log-events \
-  --log-group-name /aws/lambda/cato-security-hub-integration-<timestamp>-<random> \
-  --profile <your-profile-name> \
-  --log-stream-name $(aws logs describe-log-streams \
-    --log-group-name /aws/lambda/cato-security-hub-integration-<timestamp>-<random> \
-    --profile <your-profile-name> \
-    --query 'logStreams[0].logStreamName' \
-    --output text)
-```
-
-## Setting Up Grafana After Deployment
-
-For detailed instructions on manually setting up the Grafana dashboard using data from your deployed solution, refer to the [Grafana Integration Guide](grafana-guide.md).
-
-The guide covers:
-- Creating a Grafana workspace
-- Setting up Athena as a data source
-- Creating visualizations for compliance metrics
-- Adding annotations for finding updates
-- Sharing your dashboard with team members
-
-## Using the Full Deployment Script
-
-If you prefer a more automated approach, you can use the provided deployment script:
-
-```bash
-./deploy.sh
-```
-
-This script will:
-1. Create unique S3 bucket names
-2. Build and upload the Lambda package
-3. Deploy the CloudFormation stack
-4. Monitor the deployment until it completes
-5. Display instructions for next steps
-
-After deployment:
-1. Check the S3 bucket for collected findings
-2. Follow the [Grafana Integration Guide](grafana-guide.md) to set up your visualization dashboard
-3. Customize your Grafana dashboard as needed for your organization
 
 ## Troubleshooting
 
@@ -206,35 +106,18 @@ After deployment:
 
 1. **CloudFormation Stack Creation Fails**
    - Check the CloudFormation Events tab in the AWS Console
-   - Common causes: S3 bucket name conflicts, insufficient permissions, hitting service limits
-   - Solution: Review error messages and make necessary adjustments
+   - Review error messages and make necessary adjustments
 
-2. **Resource Already Exists Error**
-   - Error: "Resource already exists in another stack" during deployment
-   - Cause: You've previously deployed the stack with the same resource names
-   - Solution: The current script generates unique resource names to avoid this issue. If you're using an older version of the script, update to the latest version or delete the conflicting stack before deployment.
+2. **No Data in Grafana**
+   - Verify Security Hub is enabled with the NIST 800-53 standard
+   - Check Lambda CloudWatch logs for errors
+   - Verify Athena database and table were created correctly
+   - Ensure Grafana has the correct permissions to access Athena
 
-3. **Missing Dependencies**
-   - Error: Lambda functions fail with import errors
-   - Solution: Make sure the Lambda package includes all required dependencies
-
-4. **S3 Bucket Name Conflicts**
-   - Error: "Bucket already exists" during deployment
-   - Solution: Try a different unique identifier when running the deployment script
-
-5. **Security Hub Integration Issues**
-   - Error: No findings are being processed
-   - Solution: 
-     - Ensure Security Hub is enabled with the NIST 800-53 standard
-     - Check EventBridge rule is properly configured
-     - Verify Lambda function has necessary permissions
-
-6. **AWS Profile Authentication Errors**
-   - Error: "Unable to locate credentials" or "Access Denied"
-   - Solution:
-     - Verify profile exists: `aws configure list-profiles`
-     - Validate credentials: `aws sts get-caller-identity --profile <your-profile-name>`
-     - Ensure the user has sufficient permissions
+3. **Grafana Connection Issues**
+   - Check IAM permissions for Grafana to access Athena
+   - Verify region settings match between Grafana and your deployment
+   - Double-check database and table names
 
 ### Viewing Lambda Logs
 
@@ -242,11 +125,11 @@ To view CloudWatch logs for troubleshooting Lambda issues:
 
 ```bash
 aws logs get-log-events \
-  --log-group-name /aws/lambda/cato-security-hub-integration-<timestamp>-<random> \
-  --profile <your-profile-name> \
+  --log-group-name /aws/lambda/cato-security-hub-integration-[timestamp] \
+  --profile your-profile \
   --log-stream-name $(aws logs describe-log-streams \
-    --log-group-name /aws/lambda/cato-security-hub-integration-<timestamp>-<random> \
-    --profile <your-profile-name> \
+    --log-group-name /aws/lambda/cato-security-hub-integration-[timestamp] \
+    --profile your-profile \
     --order-by LastEventTime \
     --descending \
     --limit 1 \
@@ -259,22 +142,22 @@ aws logs get-log-events \
 If you need to delete the deployment:
 
 ```bash
+# First empty the S3 buckets
+aws s3 rm s3://cato-dashboard-data-[timestamp]/ --recursive --profile your-profile
+aws s3 rm s3://cato-lambda-code-[timestamp]/ --recursive --profile your-profile
+
+# Delete the CloudFormation stack
 aws cloudformation delete-stack \
-  --stack-name cato-dashboard-YYYYMMDD \
-  --profile <your-profile-name>
+  --stack-name cato-dashboard \
+  --profile your-profile
 ```
 
 ## Next Steps
 
 After successful deployment:
 
-1. Verify that Security Hub findings are being processed correctly
-2. Follow the [Grafana Integration Guide](grafana-guide.md) to set up your visualization dashboard
-3. Customize your Grafana dashboard as needed for your organization
+1. Customize your Grafana dashboard for your organization's specific compliance needs
+2. Set up regular reviews of your compliance data
+3. Consider setting up alerts for critical compliance issues
 
-## Getting Help
-
-If you encounter issues not covered in this guide, please:
-1. Check the project's GitHub Issues section
-2. Review AWS service quotas and limits
-3. Contact project maintainers for support 
+For detailed instructions on building effective compliance visualizations, refer to the [Grafana Guide](grafana-guide.md). 

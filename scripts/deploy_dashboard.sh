@@ -35,9 +35,7 @@ if [ -z "$AWS_REGION" ]; then
   exit 1
 fi
 
-echo "This script will deploy the cATO Dashboard with Security Hub integration and Athena analysis."
-echo "Grafana integration needs to be set up manually after deployment."
-echo "For instructions, see docs/grafana-guide.md after deployment completes."
+echo "This script will deploy the cATO Dashboard with Security Hub integration, Athena analysis, and Grafana visualization."
 
 # Generate unique names with timestamp and random suffix
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
@@ -74,8 +72,12 @@ else
   python3 -m pip install requests boto3 -t .
 fi
 
+# Install Grafana client for annotations
+echo "Installing Grafana client..."
+python3 -m pip install grafana-client -t .
+
 echo "Creating deployment package..."
-zip -r security_hub_integration.zip lambda_function.py requests/ certifi/ charset_normalizer/ idna/ urllib3/
+zip -r security_hub_integration.zip lambda_function.py requests/ certifi/ charset_normalizer/ idna/ urllib3/ grafana_client/
 
 echo "Uploading Lambda package to S3..."
 aws s3 cp security_hub_integration.zip s3://$LAMBDA_BUCKET/ --region $AWS_REGION $PROFILE_PARAM
@@ -85,7 +87,7 @@ cd ..
 # Deploy with CloudFormation
 echo "Deploying CloudFormation stack..."
 
-STACK_NAME="cato-dashboard-$(date +%Y%m%d)"
+STACK_NAME="cato-dashboard"
 
 # Check if stack already exists and delete it if it's in a failed state
 STACK_STATUS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_REGION $PROFILE_PARAM --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "STACK_NOT_FOUND")
@@ -124,6 +126,7 @@ aws cloudformation create-stack \
     ParameterKey=CreateS3Bucket,ParameterValue=false \
     ParameterKey=LambdaFunctionName,ParameterValue=$LAMBDA_FUNCTION_NAME \
     ParameterKey=AthenaDatabaseName,ParameterValue=$ATHENA_DB_NAME \
+    ParameterKey=GrafanaIntegration,ParameterValue=true \
   --capabilities CAPABILITY_NAMED_IAM \
   --region $AWS_REGION \
   $PROFILE_PARAM
@@ -136,34 +139,40 @@ echo ""
 echo "To monitor stack creation, run:"
 echo "aws cloudformation describe-stacks --stack-name $STACK_NAME --query 'Stacks[0].StackStatus' --region $AWS_REGION $PROFILE_PARAM"
 echo ""
-echo "Once complete, check for Security Hub findings in S3:"
-echo "aws s3 ls s3://$DATA_BUCKET/ --region $AWS_REGION $PROFILE_PARAM"
+
+# Wait for stack creation to complete
+echo "Waiting for stack creation to complete..."
+aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_REGION $PROFILE_PARAM || {
+  echo "Stack creation failed or timed out. Check the AWS CloudFormation console for details."
+  exit 1
+}
+
+echo "Stack creation completed successfully!"
 echo ""
-echo "To manually invoke the Lambda function:"
-echo "aws lambda invoke --function-name $LAMBDA_FUNCTION_NAME --payload '{}' --region $AWS_REGION $PROFILE_PARAM response.json"
+echo "Security Hub findings will be collected and stored in S3:"
+echo "s3://$DATA_BUCKET/"
 echo ""
-echo "======= Athena Setup ======="
-echo "Athena database and table will be automatically created by the CloudFormation template."
-echo "To query your findings in Athena:"
-echo "1. Go to the Athena console: https://console.aws.amazon.com/athena/"
-echo "2. Select database '$ATHENA_DB_NAME'"
-echo "3. Run a query like: SELECT * FROM security_findings LIMIT 10;"
+
+# Next steps
+echo "=========================================="
+echo "NEXT STEPS"
+echo "=========================================="
+echo "1. Set up Amazon Managed Grafana:"
+echo "   - Navigate to Amazon Managed Grafana in the AWS Console"
+echo "   - Create a new workspace named 'Compliance-Dashboard'"
+echo "   - Set up authentication using AWS IAM Identity Center"
+echo "   - Configure service access for Amazon Athena"
 echo ""
-echo "======= IMPORTANT: Grafana Setup ======="
-echo "To set up Grafana dashboards after deployment:"
-echo "1. Ensure you have an Amazon Managed Grafana workspace set up"
-echo "2. In Grafana, create a new data source using Athena"
-echo "3. Follow the detailed instructions in docs/grafana-guide.md"
+echo "2. Connect Grafana to Athena:"
+echo "   - Open your Grafana workspace URL"
+echo "   - Add a new Athena data source"
+echo "   - Configure it with database: $ATHENA_DB_NAME"
+echo "   - Set the output location to: s3://$ATHENA_RESULTS_BUCKET/"
 echo ""
-echo "======= AWS CLI Profile Information ======="
-echo "If you don't have an AWS CLI profile set up, create one with:"
-echo "aws configure --profile your-profile-name"
+echo "3. Create your compliance dashboard:"
+echo "   - Follow the detailed instructions in docs/grafana-guide.md"
 echo ""
-echo "This will prompt you to enter:"
-echo "  - AWS Access Key ID"
-echo "  - AWS Secret Access Key"
-echo "  - Default region name"
-echo "  - Default output format (json recommended)"
+echo "For complete instructions, refer to the Deployment Guide:"
+echo "docs/deployment_guide.md"
 echo ""
-echo "To list your existing profiles:"
-echo "aws configure list-profiles" 
+echo "==========================================" 
