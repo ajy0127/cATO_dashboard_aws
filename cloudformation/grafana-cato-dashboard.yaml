@@ -83,6 +83,43 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonAthenaFullAccess
         - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+      Policies:
+        - PolicyName: CloudFormationSignalPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - cloudformation:SignalResource
+                Resource: !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*'
+        - PolicyName: SSMAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:UpdateInstanceInformation
+                  - ssm:ListInstanceAssociations
+                  - ssm:PutInventory
+                  - ssm:GetDocument
+                  - ssm:DescribeDocument
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:PutComplianceItems
+                  - ssm:PutConfigurePackageResult
+                  - ssm:GetManifest
+                  - ssm:ListAssociations
+                  - ssm:UpdateAssociationStatus
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ec2messages:AcknowledgeMessage
+                  - ec2messages:DeleteMessage
+                  - ec2messages:FailMessage
+                  - ec2messages:GetEndpoint
+                  - ec2messages:GetMessages
+                  - ec2messages:SendReply
+                Resource: '*'
   
   # Instance Profile
   GrafanaInstanceProfile:
@@ -99,7 +136,7 @@ Resources:
         Timeout: PT15M
     Properties:
       InstanceType: !Ref InstanceType
-      ImageId: ami-0261755bbcb8c4a84  # Amazon Linux 2023 (us-east-1)
+      ImageId: ami-05b10e08d247fb927  # Latest Amazon Linux 2023 (us-east-1)
       SecurityGroupIds:
         - !GetAtt GrafanaSecurityGroup.GroupId
       IamInstanceProfile: !Ref GrafanaInstanceProfile
@@ -107,22 +144,61 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
           
+          # Set up logging
+          exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+          
+          echo "Starting Grafana setup..."
+          
+          # Function to handle errors
+          handle_error() {
+            echo "Error occurred in line $1"
+            /opt/aws/bin/cfn-signal -e 1 --stack ${AWS::StackName} --resource GrafanaInstance --region ${AWS::Region}
+            exit 1
+          }
+          
+          # Set error handler
+          trap 'handle_error $LINENO' ERR
+          
           # Update system packages
+          echo "Updating system packages..."
+          dnf clean all
           dnf update -y
           
-          # Install Docker
-          dnf install -y docker
-          systemctl enable docker.service
-          systemctl start docker.service
+          # Install required packages
+          echo "Installing required packages..."
+          dnf install -y docker aws-cfn-bootstrap unzip curl
+          
+          # Install AWS CLI v2
+          echo "Installing AWS CLI v2..."
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip -q awscliv2.zip
+          ./aws/install
+          rm -rf aws awscliv2.zip
+          
+          # Start and enable Docker
+          echo "Setting up Docker..."
+          if ! systemctl enable docker.service; then
+            echo "Failed to enable Docker service"
+            handle_error $LINENO
+          fi
+          if ! systemctl start docker.service; then
+            echo "Failed to start Docker service"
+            handle_error $LINENO
+          fi
+          
+          # Test Docker
+          echo "Testing Docker..."
+          if ! docker ps; then
+            echo "Docker is not running properly"
+            handle_error $LINENO
+          fi
           
           # Create directories for Grafana persistence
-          mkdir -p /grafana/data /grafana/dashboards /grafana/provisioning
-          
-          # Create provisioning directories
-          mkdir -p /grafana/provisioning/datasources
-          mkdir -p /grafana/provisioning/dashboards
+          echo "Creating Grafana directories..."
+          mkdir -p /grafana/{data,dashboards,provisioning,provisioning/datasources,provisioning/dashboards}
           
           # Create data source configuration for Athena
+          echo "Creating Athena data source configuration..."
           cat > /grafana/provisioning/datasources/athena.yaml << 'EOL'
           apiVersion: 1
           datasources:
@@ -393,11 +469,19 @@ Resources:
             -d "{\"name\":\"Viewer User\",\"email\":\"viewer@example.com\",\"login\":\"${ViewerUsername}\",\"password\":\"${ViewerPassword}\",\"OrgId\":1,\"role\":\"Viewer\"}" \
             http://${AdminUsername}:${AdminPassword}@localhost:3000/api/admin/users
           
-          # Install cfn-signal
-          dnf install -y aws-cfn-bootstrap
+          # Print AWS identity and metadata for debugging
+          echo "Checking AWS identity and metadata..."
+          aws sts get-caller-identity || echo "Failed to get AWS identity"
+          curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/ || echo "Failed to get instance metadata"
           
           # Signal CloudFormation that setup is complete
-          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource GrafanaInstance --region ${AWS::Region}
+          echo "Signaling CloudFormation..."
+          if ! /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource GrafanaInstance --region ${AWS::Region}; then
+            echo "Failed to signal CloudFormation"
+            handle_error $LINENO
+          fi
+          
+          echo "Setup complete!"
       
       Tags:
         - Key: Name

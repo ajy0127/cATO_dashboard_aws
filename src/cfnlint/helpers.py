@@ -4,7 +4,6 @@ Helpers for loading resources, managing specs, constants, etc.
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: MIT-0
 """
-
 import datetime
 import fnmatch
 import gzip
